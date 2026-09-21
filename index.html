@@ -445,6 +445,31 @@ button, input{ -webkit-tap-highlight-color: transparent; }
 .pd-card-rating .stars svg{width:11px;height:11px;}
 .pd-card-rating span{font-size:11px;color:var(--ink-soft);}
 
+/* ---------- Fale connosco ---------- */
+.contacto{
+  margin:38px auto 0;max-width:min(620px,calc(100% - 32px));padding:30px 24px;text-align:center;
+  background:linear-gradient(160deg,var(--blush-50),var(--cream));
+  border:1px solid var(--blush-100);border-radius:var(--radius-lg);
+}
+.contacto h2{
+  font-family:var(--font-display);font-size:23px;color:var(--blush-900);margin:0 0 8px;
+}
+.contacto p{font-size:14px;color:var(--ink-soft);margin:0 0 18px;line-height:1.55;}
+.contacto .btn-checkout{width:auto;display:inline-flex;padding:13px 26px;text-decoration:none;}
+
+/* Botao flutuante de WhatsApp. z-index abaixo do overlay (40) para ficar
+   coberto quando o carrinho ou o detalhe do produto abrem. */
+.whats-fab{
+  position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:34;
+  width:54px;height:54px;border-radius:50%;background:#25D366;color:#fff;
+  display:flex;align-items:center;justify-content:center;text-decoration:none;
+  box-shadow:0 8px 24px -4px rgba(37,211,102,.5);transition:transform .2s ease;
+}
+.whats-fab:hover{transform:scale(1.08);background:#1ebd58;}
+/* O carrinho flutuante e uma pilula centrada; em ecras estreitos podia tocar
+   no botao. Quando aparece, o WhatsApp sobe para ficarem empilhados. */
+.cart-fab.show ~ .whats-fab{bottom:calc(80px + env(safe-area-inset-bottom));}
+
 /* ---------- Footer ---------- */
 .site-footer{
   display:flex;align-items:center;justify-content:center;gap:8px;
@@ -580,6 +605,11 @@ button, input{ -webkit-tap-highlight-color: transparent; }
   <span id="cartFabText">0 no carrinho</span>
 </button>
 
+<!-- ============================== WHATSAPP FAB ============================== -->
+<a class="whats-fab" href="https://wa.me/244949977550?text=Ol%C3%A1!%20Vi%20o%20cat%C3%A1logo%20online%20e%20queria%20tirar%20uma%20d%C3%BAvida." target="_blank" rel="noopener" aria-label="Falar connosco pelo WhatsApp" title="Falar connosco pelo WhatsApp">
+  <svg width="27" height="27" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.79.47 3.47 1.29 4.93L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91C21.95 6.45 17.5 2 12.04 2Zm5.8 14.02c-.24.68-1.4 1.3-1.93 1.38-.5.08-1.12.11-1.81-.12-.42-.14-.95-.31-1.63-.6-2.87-1.24-4.74-4.15-4.88-4.34-.14-.19-1.17-1.55-1.17-2.96 0-1.4.74-2.09 1-2.38.26-.28.57-.35.76-.35.19 0 .38 0 .55.01.18.01.41-.07.64.49.24.58.81 2 .88 2.14.07.14.12.31.02.5-.1.19-.15.31-.3.48-.15.17-.31.38-.45.51-.15.14-.3.3-.13.59.17.28.75 1.24 1.62 2.01 1.12.99 2.06 1.3 2.35 1.44.29.14.46.12.63-.07.17-.19.71-.83.9-1.11.19-.28.38-.24.63-.14.26.09 1.65.78 1.93.92.28.14.47.21.54.33.07.12.07.68-.17 1.36Z"/></svg>
+</a>
+
 <!-- ============================== CART DRAWER ============================== -->
 <div class="drawer-overlay" id="drawerOverlay"></div>
 <aside class="cart-drawer" id="cartDrawer" aria-hidden="true">
@@ -622,6 +652,16 @@ button, input{ -webkit-tap-highlight-color: transparent; }
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
   <span id="toastMessage"></span>
 </div>
+
+<!-- ============================== FALE CONNOSCO ============================== -->
+<section class="contacto">
+  <h2>Tem alguma dúvida?</h2>
+  <p>Fale connosco pelo WhatsApp. Ajudamos a escolher a fragrância certa, esclarecemos dúvidas sobre os produtos e combinamos a entrega.</p>
+  <a class="btn btn-checkout" href="https://wa.me/244949977550?text=Ol%C3%A1!%20Vi%20o%20cat%C3%A1logo%20online%20e%20queria%20tirar%20uma%20d%C3%BAvida." target="_blank" rel="noopener">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.79.47 3.47 1.29 4.93L2 22l5.29-1.39a9.9 9.9 0 0 0 4.75 1.21h.01c5.46 0 9.9-4.45 9.9-9.91C21.95 6.45 17.5 2 12.04 2Zm5.8 14.02c-.24.68-1.4 1.3-1.93 1.38-.5.08-1.12.11-1.81-.12-.42-.14-.95-.31-1.63-.6-2.87-1.24-4.74-4.15-4.88-4.34-.14-.19-1.17-1.55-1.17-2.96 0-1.4.74-2.09 1-2.38.26-.28.57-.35.76-.35.19 0 .38 0 .55.01.18.01.41-.07.64.49.24.58.81 2 .88 2.14.07.14.12.31.02.5-.1.19-.15.31-.3.48-.15.17-.31.38-.45.51-.15.14-.3.3-.13.59.17.28.75 1.24 1.62 2.01 1.12.99 2.06 1.3 2.35 1.44.29.14.46.12.63-.07.17-.19.71-.83.9-1.11.19-.28.38-.24.63-.14.26.09 1.65.78 1.93.92.28.14.47.21.54.33.07.12.07.68-.17 1.36Z"/></svg>
+    Falar pelo WhatsApp
+  </a>
+</section>
 
 <!-- ============================== FOOTER ============================== -->
 <footer class="site-footer">
