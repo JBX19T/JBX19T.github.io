@@ -211,7 +211,13 @@ const HOLDERS_API=(()=>{const ok=v=>/^https:\/\//.test(v||'')?v.replace(/\/$/,''
   try{if(q)localStorage.setItem('holders',q);return q||ok(localStorage.getItem('holders'))||DEFAULT_HOLDERS}catch(e){return q||DEFAULT_HOLDERS}})();   // ?holders= fica guardado (útil na app instalada)
 const queue=[],seen=new Set();let lastFill=0,fillBusy=false;
 const status=(t,ok)=>{const e=$('src');e.textContent=t;e.style.color=ok?'#ffffff':'#777777'};
-async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status+' '+u.split('?')[0]);return r.json()}
+async function jget(u,opts){const r=await (opts?.web&&window.CapacitorWebFetch||fetch)(u,opts);
+  if(!r.ok){let m='';try{m=(await r.json()).error||''}catch(e){}throw new Error(r.status+' '+(m||u.split('?')[0]))}
+  return r.json()}
+/* Na app Android o fetch global é substituído pelo nativo (CapacitorHttp), que não envia Origin,
+   e o proxy só aceita origens autorizadas. Para o proxy usa-se o fetch do próprio WebView
+   (CapacitorWebFetch), que envia Origin: https://localhost. No navegador é o fetch normal. */
+const PROXY_OPTS={web:true};
 const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
 
 /* par DexScreener -> token do desk. Campos que a DexScreener não fornece ficam null (n/a) e o filtro correspondente é ignorado. */
@@ -263,9 +269,9 @@ async function loadCandles(t){
 /* holders reais (Solana) via proxy Helius: top wallet, top 10 (sem pools/programas) e autoridades do mint */
 async function loadHolders(t){
   if(!HOLDERS_API||t.chain!=='solana'||t.holdersTried)return;t.holdersTried=true;
-  try{const h=await jget(`${HOLDERS_API}/holders?mint=${t.addr}`);
+  try{const h=await jget(`${HOLDERS_API}/holders?mint=${t.addr}`,PROXY_OPTS);
     t.topWallet=h.topWallet;t.top10=h.top10;t.mintAuth=h.mintAuthority;t.freezeAuth=h.freezeAuthority;t.holdersOk=true;
-  }catch(e){log('l',`holders ${t.name}: ${e.message}`)}
+  }catch(e){log('l',`holders ${t.name}: ${e.message}`);say('vet',`holders: ${e.message}`)}
 }
 /* preços reais das posições abertas */
 async function refreshPrices(){
@@ -304,7 +310,7 @@ async function pollFollow(){
   if(DEMO)return demoFollow();
   if(!HOLDERS_API)return;
   for(const f of FOLLOW){
-    try{const j=await jget(`${HOLDERS_API}/wallet?address=${f.addr}`);f.err=null;const first=!f.seen;f.seen??=new Set();
+    try{const j=await jget(`${HOLDERS_API}/wallet?address=${f.addr}`,PROXY_OPTS);f.err=null;const first=!f.seen;f.seen??=new Set();
       for(const s of j.swaps.slice().reverse()){const k=s.signature+s.side+s.mint;if(f.seen.has(k))continue;f.seen.add(k);if(!first)await onFollowSwap(f,s)}
     }catch(e){f.err=e.message}}
   renderFollow();
