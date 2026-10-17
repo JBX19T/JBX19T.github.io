@@ -1,6 +1,6 @@
 {
   "appId": "com.jbx19t.grokbot",
-  "appName": "Dolus Tradebot",
+  "appName": "DOLLOS Trade Bot",
   "webDir": "www",
   "server": { "androidScheme": "https" },
   "plugins": { "CapacitorHttp": { "enabled": true } }

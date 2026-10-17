@@ -1,4 +1,4 @@
-# Proxy de holders (Helius) para o GROKBOT
+# Proxy de holders (Helius) para o DOLLOS Trade Bot
 
 O site é estático e público, por isso a chave da Helius não pode estar no JavaScript.
 Este Cloudflare Worker guarda a chave como segredo e expõe só `GET /holders?mint=<mint Solana>`.

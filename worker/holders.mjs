@@ -1,4 +1,4 @@
-// Cloudflare Worker: proxy de holders (Helius) para o GROKBOT. A chave fica em env.HELIUS_API_KEY (segredo).
+// Cloudflare Worker: proxy de holders (Helius) para o DOLLOS Trade Bot. A chave fica em env.HELIUS_API_KEY (segredo).
 // GET /holders?mint=<mint solana>  ->  { topWallet, top10, mintAuthority, freezeAuthority, supply, excluded }
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SYSTEM = '11111111111111111111111111111111';

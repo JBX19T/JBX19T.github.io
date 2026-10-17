@@ -33,9 +33,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk dolus-tradebot.apk
-          gh release delete grokbot-apk --yes --cleanup-tag 2>/dev/null || true
-          gh release create grokbot-apk dolus-tradebot.apk --target "$GITHUB_SHA" \
-            --title "Dolus Tradebot (APK)" --notes "APK de debug do Dolus Tradebot (paper trading). Commit ${GITHUB_SHA::7}."
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk dollos-trade-bot.apk
+          gh release delete dollos-apk --yes --cleanup-tag 2>/dev/null || true
+          gh release create dollos-apk dollos-trade-bot.apk --target "$GITHUB_SHA" \
+            --title "DOLLOS Trade Bot (APK)" --notes "APK de debug do DOLLOS Trade Bot (paper trading). Commit ${GITHUB_SHA::7}."
       - uses: actions/upload-artifact@v4
-        with: { name: dolus-tradebot-apk, path: dolus-tradebot.apk }
+        with: { name: dollos-trade-bot-apk, path: dollos-trade-bot.apk }
