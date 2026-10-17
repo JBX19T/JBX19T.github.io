@@ -24,6 +24,7 @@ jobs:
           npm install
           mkdir -p www && cp -r ../grokbot/. www/
           npx cap add android
+          npx --yes @capacitor/assets@3.0.5 generate --android --iconBackgroundColor '#000000' --iconBackgroundColorDark '#000000'
           npx cap sync android
       - name: Build debug APK
         working-directory: mobile/android
@@ -32,9 +33,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk grokbot.apk
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk dolus-tradebot.apk
           gh release delete grokbot-apk --yes --cleanup-tag 2>/dev/null || true
-          gh release create grokbot-apk grokbot.apk --target "$GITHUB_SHA" \
-            --title "GROKBOT (APK)" --notes "APK de debug do GROKBOT + JEV (paper trading). Commit ${GITHUB_SHA::7}."
+          gh release create grokbot-apk dolus-tradebot.apk --target "$GITHUB_SHA" \
+            --title "Dolus Tradebot (APK)" --notes "APK de debug do Dolus Tradebot (paper trading). Commit ${GITHUB_SHA::7}."
       - uses: actions/upload-artifact@v4
-        with: { name: grokbot-apk, path: grokbot.apk }
+        with: { name: dolus-tradebot-apk, path: dolus-tradebot.apk }
