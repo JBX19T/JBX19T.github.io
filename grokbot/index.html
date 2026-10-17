@@ -18,7 +18,7 @@ header h1{font:800 26px/1 system-ui,sans-serif;letter-spacing:3px;text-shadow:va
 header .tag{font-size:11px;letter-spacing:2px;opacity:.55;flex:1}
 header .day{font-size:11px;opacity:.6}
 .clock{background:#000;border:1px solid #333;color:#fff;text-shadow:var(--glow);padding:7px 12px;border-radius:6px;font-weight:700;font-size:17px}
-.logo{height:58px;width:auto;opacity:.92}
+.logo{height:58px;width:auto}
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px}
 .card{background:var(--card);border-radius:8px;padding:10px 12px;min-height:84px;border-left:3px solid var(--c);position:relative;transition:box-shadow .2s}
 .card.on{box-shadow:0 0 0 1px var(--c),0 0 14px -4px rgba(255,255,255,.3)}
@@ -418,7 +418,7 @@ function drawOffice(ts){
   const c=$('office'),narrow=c.clientWidth<600,[x,w,h]=setup(c,narrow?330:430),dw=Math.min(68,w*.15),br=narrow?10:13;x.fillStyle='#050505';x.fillRect(0,0,w,h);
   x.strokeStyle='#121212';x.lineWidth=1;for(let i=0;i<w;i+=32){x.beginPath();x.moveTo(i,0);x.lineTo(i,h);x.stroke()}for(let j=0;j<h;j+=32){x.beginPath();x.moveTo(0,j);x.lineTo(w,j);x.stroke()}
   // logo + monitor
-  if(LOGO.complete&&LOGO.naturalWidth){const lw=Math.min(w*.2,190),lh=lw*LOGO.naturalHeight/LOGO.naturalWidth;x.globalAlpha=.9;x.drawImage(LOGO,w*.03,h*.05,lw,lh);x.globalAlpha=1}
+  if(LOGO.complete&&LOGO.naturalWidth){const lw=Math.min(w*.17,170),lh=lw*LOGO.naturalHeight/LOGO.naturalWidth;x.globalAlpha=1;x.drawImage(LOGO,w*.03,h*.05,lw,lh);x.globalAlpha=1}
   x.fillStyle='#0a0a0a';x.strokeStyle='#333333';x.fillRect(w*.22,h*.07,w*.44,h*.28);x.strokeRect(w*.22,h*.07,w*.44,h*.28);
   if(S.cur&&S.cur.candles.length){const cs=S.cur.candles,mn=Math.min(...cs.map(a=>a.l)),mx=Math.max(...cs.map(a=>a.h)),bw=w*.44/cs.length;
     cs.forEach((a,i)=>{const Y=v=>h*.09+h*.24*(1-(v-mn)/(mx-mn||1));x.fillStyle=a.c>=a.o?'#ffffff':'#555';x.fillRect(w*.22+i*bw+1,Math.min(Y(a.o),Y(a.c)),bw-2,Math.max(1,Math.abs(Y(a.o)-Y(a.c))))})}
