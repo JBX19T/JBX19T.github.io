@@ -67,6 +67,7 @@ th:first-child,td:first-child{text-align:left}
 .cp{border:1px solid #fff;border-radius:3px;font-size:8px;padding:0 3px;margin-left:4px}
 .up{color:#fff}.dn{color:#8a8a8a}
 .pmbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;color:var(--dim)}
+.halt{border:1px solid #fff;background:#161616;border-radius:6px;padding:8px 10px;margin:0 0 8px;font-size:11px;line-height:1.6;color:#fff}.halt button{margin-left:6px}
 .mkg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}
 .mkc{background:#0a0a0a;border:1px solid var(--line);border-radius:8px;padding:9px 10px;min-width:0}
 .mkh{display:flex;justify-content:space-between;align-items:baseline;gap:6px}.mkh b{font:800 13px system-ui,sans-serif;color:#fff}.mkh small,.mkr small{color:var(--dim);font-size:9.5px}
@@ -130,9 +131,11 @@ th:first-child,td:first-child{text-align:left}
     </div></div>
   <div class="panel"><div class="ph"><span>PAPER MONEY · PORTFOLIO</span><em id="pmInfo"></em></div>
     <div class="pm">
+      <div class="halt" id="halt" hidden></div>
       <div class="pmbar">Saldo inicial $<input id="pmStart" type="number" min="100" step="100"><button class="ghost" id="pmReset">REINICIAR</button></div>
       <table><thead><tr><th>Asset</th><th>Entrada</th><th>Preço</th><th>Valor</th><th>P/L</th><th></th></tr></thead><tbody id="pbody"></tbody></table>
       <div class="note" id="pempty">Sem posições abertas.</div>
+      <div class="note">Proteção de capital: posições de 2% a 5% do saldo (no máximo 3), e se a conta perder 20% desde o seu máximo o bot fecha tudo e pára; perde 5% num dia, pausa até amanhã. Retomar é sempre manual.</div>
     </div></div>
 </div>
 
@@ -154,7 +157,10 @@ th:first-child,td:first-child{text-align:left}
 /* ===== CONFIG: tudo o que o "desk" acredita (thresholds.py) ===== */
 const CFG = {
   startBalance: 12000,
-  ticketPct: [0.10, 0.25],       // % do saldo por posição
+  ticketPct: [0.02, 0.05],       // % do saldo por posição (pequeno: um rug custa no máximo o ticket)
+  maxOpen: 3,                    // posições abertas ao mesmo tempo
+  ddStop: 0.20,                  // travão: perda de 20% desde o máximo da conta -> fecha tudo e pára
+  dayLoss: 0.05,                 // pausa até ao dia seguinte se perder 5% num dia
   takeProfit: 0.35, stopLoss: -0.14, maxHoldTicks: 22, maxHoldMin: 60,
   hard: [  // [chave, limite, tipo, métrica]
     ['min_age_minutes', 15,     'min','age',    v=>v+'m'],
@@ -207,7 +213,7 @@ order.forEach(k=>{const a=AG[k];a.el=document.createElement('div');a.el.classNam
 /* ===== estado ===== */
 try{const v=+localStorage.getItem('paperStart');if(v>=100)CFG.startBalance=v}catch(e){}
 const S={cash:CFG.startBalance,positions:[],hist:[CFG.startBalance],vol:[0],closed:0,wins:0,scanned:0,pages:0,pts:0,
-  day:1,t:new Date(Date.UTC(2026,9,4,22,0)),cur:null,stage:-1,passed:[],failIdx:-1,lastPick:'PAPER'};
+  day:1,t:new Date(Date.UTC(2026,9,4,22,0)),cur:null,stage:-1,passed:[],failIdx:-1,lastPick:'PAPER',peak:CFG.startBalance,halt:null,dayGuard:{d:'',eq:CFG.startBalance}};
 const equity=()=>S.cash+S.positions.reduce((s,p)=>s+p.size*(p.px/p.entry),0);
 
 /* ===== dados reais: DexScreener (+ GeckoTerminal para velas) ===== */
@@ -345,7 +351,8 @@ $('pbody').addEventListener('click',e=>{const i=e.target.dataset.i;if(i!=null&&S
 $('pmStart').value=CFG.startBalance;
 $('pmReset').addEventListener('click',()=>{const v=+$('pmStart').value;if(!(v>=100))return;if(!confirm(`Reiniciar a carteira de paper money com $${v}?`))return;
   CFG.startBalance=v;try{localStorage.setItem('paperStart',v)}catch(e){}
-  S.cash=v;S.positions=[];S.hist=[v];S.vol=[0];S.closed=S.wins=0;renderPortfolio();drawBal()});
+  S.cash=v;S.positions=[];S.hist=[v];S.vol=[0];S.closed=S.wins=0;S.peak=v;S.halt=null;S.dayGuard={d:'',eq:v};renderPortfolio();renderHalt();drawBal()});
+$('halt').addEventListener('click',e=>{if(e.target.id==='resumeBtn')resumeTrading()});
 
 /* ===== modo demo (?demo): gerador aleatório, sem rede ===== */
 function genToken(){
@@ -475,6 +482,20 @@ function closePos(p,why){
   say('risk',`${why} ${p.t.name} ${r>=0?'+':''}${(r*100).toFixed(1)}%`);log(pnl>0?'w':'l',`CLOSE ${p.t.name} ${why}${p.copy?' (copy '+p.copy+')':''} ${pnl>=0?'+':''}${money(pnl)}`);
   AG.risk.set('closed',`${S.wins}W ${S.closed-S.wins}L`,S.closed?S.wins/S.closed:0);renderPortfolio();
 }
+const todayUTC=()=>new Date().toISOString().slice(0,10);
+function haltAll(kind,msg,why,day){S.positions.slice().forEach(p=>closePos(p,why));S.halt={kind,msg,day};log('l','⛔ PARADO · '+msg);say('risk','⛔ '+msg)}
+function guard(){   // proteção de capital: corre a cada ciclo e a cada atualização de preços
+  const e=equity(),d=todayUTC();
+  if(S.dayGuard.d!==d)S.dayGuard={d,eq:e};
+  if(e>S.peak)S.peak=e;
+  if(!S.halt){
+    if(e<=S.peak*(1-CFG.ddStop))haltAll('dd',`perda de ${Math.round(CFG.ddStop*100)}% desde o máximo da conta`,'kill-switch');
+    else if(e<=S.dayGuard.eq*(1-CFG.dayLoss))haltAll('day',`perda diária de ${Math.round(CFG.dayLoss*100)}%`,'limite diário',d);
+  }else if(S.halt.kind==='day'&&S.halt.day!==d){S.halt=null;log('p','retomado: novo dia')}
+  renderHalt();
+}
+function resumeTrading(){S.halt=null;S.peak=equity();S.dayGuard={d:todayUTC(),eq:equity()};renderHalt();log('p','retomado manualmente')}
+function renderHalt(){const el=$('halt');if(!el)return;el.hidden=!S.halt;if(S.halt)el.innerHTML=`⛔ <b>PARADO</b> · ${S.halt.msg}. Nenhuma compra nova. <button class="ghost" id="resumeBtn">RETOMAR</button>`}
 async function tickPositions(){
   if(DEMO)S.positions.forEach(p=>{p.px*=1+rnd(-.07,.085)+(p.t.shape-.5)*.015;p.t.px=p.px});else await refreshPrices();
   for(const p of S.positions.slice()){
@@ -483,7 +504,7 @@ async function tickPositions(){
     if(why)closePos(p,why);
   }
   if(S.pos&&S.cur&&S.positions.length)S.pos=S.positions.find(p=>p.t===S.cur)?.t.px;
-  renderPortfolio();
+  guard();renderPortfolio();
 }
 function showClock(){$('clock').textContent=S.t.toISOString().slice(11,16)+' UTC'}
 function advClock(){if(DEMO)S.t=new Date(S.t.getTime()+rnd(14,24)*60000);else S.t=new Date();showClock();
@@ -515,11 +536,12 @@ async function cycle(){
   S.stage=3;renderTh(t);renderChain();await sleep(900);
   const softFail=CFG.soft.find(([k,l,ty])=>t.soft[k]!=null&&(ty==='min'?t.soft[k]<l:t.soft[k]>l));
   if(softFail){S.failIdx=3;renderChain();say('chief',`soft_kill: ${softFail[0]}`);log('l',`✗ ${t.name} soft_kill ${softFail[0]}`);return finish()}
+  if(S.halt){S.failIdx=4;renderChain();say('chief','⛔ parado: '+S.halt.msg);log('l',`✗ ${t.name} ignorado (conta parada)`);return finish()}
   // pick — CHIEF → SIZE → FILLS
   S.stage=4;renderChain();S.lastPick=t.name;
   say('chief',`pick ${t.name}`,'size');AG.chief.set('last pick',t.name,1);log('p',`PICK ${t.name}`);await sleep(900);
   const pct=rnd(...CFG.ticketPct),eq=equity(),size=Math.min(S.cash*.95,eq*pct);
-  if(size<50||S.positions.length>=5){say('size','no room — passing');log('l',`✗ ${t.name} no capital`);return finish()}
+  if(size<50||S.positions.length>=CFG.maxOpen){say('size','no room — passing');log('l',`✗ ${t.name} no capital`);return finish()}
   move('size','size');say('size',`ticket ${(pct*100).toFixed(1)}% = ${money(size)}`);AG.size.set('ticket',money(size),pct/CFG.ticketPct[1]);await sleep(900);
   move('fills','fills');const slip=DEMO?rnd(.002,.02):Math.min(.08,size/t.liq+.003);   // paper: slippage ~ ticket/liquidez + feesay('fills',`bought ${t.name} · slip ${(slip*100).toFixed(2)}%`);
   S.cash-=size;S.positions.push({t,size,entry:t.px*(1+slip),px:t.px,age:0,opened:Date.now(),copy:t.copyFrom||null});S.pos=t.px;AG.fills.set('open',S.positions.length+' pos',S.positions.length/5);
@@ -527,7 +549,7 @@ async function cycle(){
   finish();
 }
 function finish(){
-  S.stage=Math.max(S.stage,0);
+  S.stage=Math.max(S.stage,0);guard();
   S.hist.push(equity());if(S.hist.length>70){S.hist.shift();S.vol.shift()}while(S.vol.length<S.hist.length)S.vol.push(0);
   if(S.scanned%40===0)S.day++;
   const open=S.positions.length;AG.risk.set('open',open+' pos · '+money(S.positions.reduce((s,p)=>s+p.size,0)),open/5);
