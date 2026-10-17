@@ -375,7 +375,7 @@ function renderMeta(t){
 }
 
 /* ===== gráficos ===== */
-function setup(c,h=+c.getAttribute('height')){
+function setup(c,h=+(c.dataset.h??=c.getAttribute('height'))){   // altura lógica guardada uma vez: o atributo height passa a ser a altura em pixels físicos
   const d=devicePixelRatio||1,w=c.clientWidth,W=Math.round(w*d),H=Math.round(h*d);
   if(c.width!==W||c.height!==H){c.width=W;c.height=H;c.style.height=h+'px'}   // redimensionar limpa o canvas: só quando o tamanho muda
   const x=c.getContext('2d');x.setTransform(d,0,0,d,0,0);return [x,w,h];
