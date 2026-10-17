@@ -56,12 +56,12 @@ canvas{display:block;width:100%}
 <header>
   <div class="logo"><svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#fff"/><circle cx="9" cy="10" r="1.6" fill="#111"/><circle cx="15" cy="10" r="1.6" fill="#111"/></svg></div>
   <h1>GROKBOT + JEV</h1><div class="tag">JEV PICKS, GROK TRADES</div>
-  <div class="day" id="day"></div><div class="clock" id="clock">--:-- UTC</div>
+  <div class="day" id="src" style="font-weight:700">…</div><div class="day" id="day"></div><div class="clock" id="clock">--:-- UTC</div>
 </header>
 
 <div class="cards" id="cards"></div>
 
-<div class="panel"><div class="ph"><span>DESK</span><em id="deskinfo">PAPER TRADING · SIMULATED</em></div><canvas id="office" height="430"></canvas></div>
+<div class="panel"><div class="ph"><span>DESK</span><em id="deskinfo">PAPER TRADING · LIVE DATA</em></div><canvas id="office" height="430"></canvas></div>
 
 <div class="panel"><div class="ph"><span id="balLabel">BALANCE · DAY 1 · PAPER</span><em id="balPnl"></em></div><canvas id="bal" height="150"></canvas></div>
 
@@ -76,7 +76,7 @@ canvas{display:block;width:100%}
 </div>
 
 <div class="panel"><div class="ph"><span>TRADE LOG</span><em>PAPER</em></div><div class="log" id="log"></div></div>
-<div class="foot">Simulação (paper trading) — dados gerados aleatoriamente, sem dinheiro real nem ligação a exchanges.</div>
+<div class="foot">Paper trading: preços e liquidez reais da DexScreener, ordens simuladas (sem dinheiro real). Sem dados de holders/dev na DexScreener: esses filtros mostram n/a e são ignorados. Junta <b>?demo</b> ao URL para o modo simulado offline.</div>
 </div>
 
 <script>
@@ -84,7 +84,7 @@ canvas{display:block;width:100%}
 const CFG = {
   startBalance: 12000,
   ticketPct: [0.10, 0.25],       // % do saldo por posição
-  takeProfit: 0.35, stopLoss: -0.14, maxHoldTicks: 22,
+  takeProfit: 0.35, stopLoss: -0.14, maxHoldTicks: 22, maxHoldMin: 60,
   hard: [  // [chave, limite, tipo, métrica]
     ['min_age_minutes', 15,     'min','age',    v=>v+'m'],
     ['min_liquidity_usd',12000, 'min','liq',    fmt],
@@ -138,7 +138,71 @@ const S={cash:CFG.startBalance,positions:[],hist:[CFG.startBalance],vol:[0],clos
   day:1,t:new Date(Date.UTC(2026,9,4,22,0)),cur:null,stage:-1,passed:[],failIdx:-1,lastPick:'PAPER'};
 const equity=()=>S.cash+S.positions.reduce((s,p)=>s+p.size*(p.px/p.entry),0);
 
-/* ===== geração de token ===== */
+/* ===== dados reais: DexScreener (+ GeckoTerminal para velas) ===== */
+const DEMO=new URLSearchParams(location.search).has('demo');
+const DS='https://api.dexscreener.com',GT='https://api.geckoterminal.com/api/v2';
+const GT_NET={solana:'solana',ethereum:'eth',base:'base',bsc:'bsc',arbitrum:'arbitrum',polygon:'polygon_pos',avalanche:'avax',optimism:'optimism'};
+const CHAINS=['solana','base','ethereum','bsc'];   // chains aceites pelo desk
+const queue=[],seen=new Set();let lastFill=0,fillBusy=false;
+const status=(t,ok)=>{const e=$('src');e.textContent=t;e.style.color=ok?'#2fe08a':'#ff4b5c'};
+async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status+' '+u.split('?')[0]);return r.json()}
+const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
+
+/* par DexScreener -> token do desk. Campos que a DexScreener não fornece ficam null (n/a) e o filtro correspondente é ignorado. */
+function mapPair(p){
+  const pc=p.priceChange||{},tx=p.txns?.h24||{},liq=p.liquidity?.usd||0,mcap=p.marketCap||p.fdv||0,px=+p.priceUsd;
+  if(!px||!liq||!mcap||!p.pairCreatedAt)return null;
+  const social=(p.info?.socials||[]).some(x=>x.type==='twitter');
+  const shape=clamp(.45+(pc.m5>0?.15:-.1)+(pc.h1>0?.15:-.1)+(pc.h6>0?.1:0)-(pc.h24>500?.3:0)+clamp((pc.h1||0)/400,-.1,.15));
+  const ticket=CFG.startBalance*CFG.ticketPct[1];
+  return {name:(p.baseToken.symbol||'?').toUpperCase().slice(0,12),addr:p.baseToken.address,chain:p.chainId,dex:p.dexId,pair:p.pairAddress,url:p.url,
+    age:Math.floor((Date.now()-p.pairCreatedAt)/60000),mcap,liq,vol:p.volume?.h24||0,trades:(tx.buys||0)+(tx.sells||0),
+    topWallet:null,top10:null,           // sem dados de holders na DexScreener
+    shape,px,pc,
+    soft:{ // proxies calculados a partir de dados reais; null = indisponível
+      concentration_is_exit_risk:clamp(1-(liq/mcap)*5),
+      momentum_already_spent:clamp(Math.max(pc.h24||0,0)/300),
+      liquidity_fits_ticket:clamp(liq/(ticket*40)),
+      account_is_the_project:social?1:.3,
+      recycled_account:null,dev_still_loaded:null},
+    candles:[]};
+}
+/* enche a fila: perfis recentes + boosts -> tokens (lotes de 30 por chain) */
+async function refill(){
+  if(fillBusy||Date.now()-lastFill<15000)return;fillBusy=true;lastFill=Date.now();
+  try{
+    const lists=await Promise.all(['token-profiles/latest/v1','token-boosts/latest/v1','token-boosts/top/v1'].map(u=>jget(`${DS}/${u}`).catch(()=>[])));
+    const by={};lists.flat().forEach(x=>{if(!CHAINS.includes(x.chainId))return;const k=x.chainId+':'+x.tokenAddress;if(seen.has(k))return;seen.add(k);(by[x.chainId]??=[]).push(x.tokenAddress)});
+    for(const ch in by){for(let i=0;i<by[ch].length;i+=30){
+      const pairs=await jget(`${DS}/tokens/v1/${ch}/${by[ch].slice(i,i+30).join(',')}`).catch(()=>[]);
+      const best={};pairs.forEach(p=>{const a=p.baseToken.address;if(!best[a]||(p.liquidity?.usd||0)>(best[a].liquidity?.usd||0))best[a]=p});
+      Object.values(best).map(mapPair).filter(Boolean).forEach(t=>queue.push(t))}}
+    status('DEXSCREENER · LIVE',true);
+  }catch(e){status('DEXSCREENER · '+e.message,false)}
+  fillBusy=false;
+}
+async function getToken(){
+  if(DEMO)return genToken();
+  for(let tries=0;;tries++){
+    if(!queue.length){refill();await sleep(1500);if(!queue.length&&tries>3){S.cur=null;status('A AGUARDAR DADOS…',false);await sleep(8000)}continue}
+    const t=queue.shift();if(queue.length<5)refill();
+    await loadCandles(t);return t;
+  }
+}
+async function loadCandles(t){
+  try{const j=await jget(`${GT}/networks/${GT_NET[t.chain]||t.chain}/pools/${t.pair}/ohlcv/minute?aggregate=5&limit=60`);
+    const L=j.data.attributes.ohlcv_list.slice().reverse(),mv=Math.max(...L.map(x=>x[5]))||1;
+    t.candles=L.map(x=>({o:x[1],h:x[2],l:x[3],c:x[4],v:x[5]/mv}))}catch(e){t.candles=[]}
+}
+/* preços reais das posições abertas */
+async function refreshPrices(){
+  if(DEMO||!S.positions.length)return;
+  const by={};S.positions.forEach(p=>(by[p.t.chain]??=new Set()).add(p.t.pair));
+  for(const ch in by){try{const j=await jget(`${DS}/latest/dex/pairs/${ch}/${[...by[ch]].join(',')}`);
+    (j.pairs||[]).forEach(q=>S.positions.filter(p=>p.t.pair===q.pairAddress).forEach(p=>{if(+q.priceUsd)p.px=p.t.px=+q.priceUsd}))}catch(e){}}
+}
+
+/* ===== modo demo (?demo): gerador aleatório, sem rede ===== */
 function genToken(){
   const good=Math.random()<0.6;
   const mcap=good?rnd(70e3,4e6):rnd(15e3,120e3);
@@ -161,12 +225,12 @@ function renderTh(t,failKey){
   let h='<div class="sec">HARD = { <span style="color:var(--dim)"># arithmetic, costs nothing</span></div>';
   CFG.hard.forEach(([k,lim,ty,m,f])=>{
     let v='',mark='…',cls='';
-    if(t&&S.stage>=0){const x=t[m];v=f(x);const ok=ty==='min'?x>=lim:x<=lim;mark=ok?'✓':'✗';if(!ok)cls=' fail'}
+    if(t&&S.stage>=0){const x=t[m];if(x==null){v='n/a';mark='–'}else{v=f(x);const ok=ty==='min'?x>=lim:x<=lim;mark=ok?'✓':'✗';if(!ok)cls=' fail'}}
     h+=`<div class="r${cls}"><span>${k}</span><span>${ty==='max'?lim.toFixed(2):lim.toLocaleString('en').replace(/,/g,'_')}</span><span>${v}</span><span class="${mark==='✓'?'ok':mark==='✗'?'no':''}">${mark}</span></div>`;});
   h+='<div class="sec">SOFT = { <span style="color:var(--dim)"># applied to jev\'s answers</span></div>';
   CFG.soft.forEach(([k,lim,ty])=>{
     let v='',mark='…',cls='';
-    if(t&&S.stage>=3){const x=t.soft[k];v=x.toFixed(2);const ok=ty==='min'?x>=lim:x<=lim;mark=ok?'✓':'✗';if(!ok)cls=' fail'}
+    if(t&&S.stage>=3){const x=t.soft[k];if(x==null){v='n/a';mark='–'}else{v=x.toFixed(2);const ok=ty==='min'?x>=lim:x<=lim;mark=ok?'✓':'✗';if(!ok)cls=' fail'}}
     h+=`<div class="r${cls}"><span>${k}</span><span>${ty} ${lim.toFixed(2)}</span><span>${v}</span><span class="${mark==='✓'?'ok':mark==='✗'?'no':''}">${mark}</span></div>`;});
   $('th').innerHTML=h;
 }
@@ -176,10 +240,10 @@ function renderChain(){
     return `<span class="p ${cl}">${c}</span>`}).join('<span>→</span>');
 }
 function renderMeta(t){
-  $('meta').innerHTML=`<div><b>${t.name}</b>token</div><div><b>$${fmt(t.mcap)}</b>mcap</div><div><b>$${fmt(t.liq)}</b>liquidity</div><div><b>$${fmt(t.vol)}</b>vol 24h</div><div><b>${t.trades}</b>trades</div><div><b>${t.age}m</b>age</div>`;
+  $('meta').innerHTML=`<div><b>${t.url?`<a href="${t.url}" target="_blank" rel="noopener" style="color:inherit">${t.name}</a>`:t.name}</b>${t.chain||'token'}</div><div><b>$${fmt(t.mcap)}</b>mcap</div><div><b>$${fmt(t.liq)}</b>liquidity</div><div><b>$${fmt(t.vol)}</b>vol 24h</div><div><b>${t.trades}</b>trades</div><div><b>${t.age>=1440?Math.floor(t.age/1440)+'d':t.age+'m'}</b>age</div>`;
   const names=['liquidity depth','holder spread','volume vs mcap','rug signature','fresh wallets','entry window'];
-  const vals=[t.liq/t.mcap>.12,t.top10<.65,t.vol/t.mcap>.4,t.soft.dev_still_loaded<.55,t.soft.recycled_account<.5,t.shape>.4];
-  $('checks').innerHTML=names.map((n,i)=>`<div><span>${n}</span><b class="${vals[i]?'ok':'no'}" style="color:var(--${vals[i]?'green':'red'})">${vals[i]?'PASS':'FAIL'}</b></div>`).join('');
+  const sf=t.soft,vals=[t.liq/t.mcap>.12,t.top10==null?null:t.top10<.65,t.vol/t.mcap>.4,sf.dev_still_loaded==null?null:sf.dev_still_loaded<.55,sf.recycled_account==null?null:sf.recycled_account<.5,t.shape>.4];
+  $('checks').innerHTML=names.map((n,i)=>{const v=vals[i],c=v==null?'var(--dim)':v?'var(--green)':'var(--red)';return `<div><span>${n}</span><b style="color:${c}">${v==null?'N/A':v?'PASS':'FAIL'}</b></div>`}).join('');
 }
 
 /* ===== gráficos ===== */
@@ -198,7 +262,7 @@ function drawBal(){
   const pnl=e-CFG.startBalance;$('balPnl').textContent=`${S.wins}W ${S.closed-S.wins}L · ${pnl>=0?'+':''}${(pnl/CFG.startBalance*100).toFixed(2)}%`;
 }
 function drawChart(){
-  const [x,w,h]=setup($('chart'));x.clearRect(0,0,w,h);const t=S.cur;if(!t)return;
+  const [x,w,h]=setup($('chart'));x.clearRect(0,0,w,h);const t=S.cur;if(!t||!t.candles.length){x.fillStyle='#4a4d62';x.font='11px monospace';x.fillText('sem velas disponíveis',12,24);return}
   const cs=t.candles,mn=Math.min(...cs.map(c=>c.l)),mx=Math.max(...cs.map(c=>c.h)),cw=w/cs.length;
   const Y=v=>8+(h-40)*(1-(v-mn)/(mx-mn||1));
   cs.forEach((c,i)=>{const up=c.c>=c.o,col=up?'#2fe08a':'#ff5a3c',cx=i*cw+cw/2;x.strokeStyle=col;x.fillStyle=col;
@@ -219,7 +283,7 @@ function drawOffice(ts){
   // logo + monitor
   x.fillStyle='#fff';x.font='800 20px system-ui';x.fillText('FOMO',w*.04,h*.2);
   x.fillStyle='#10101a';x.strokeStyle='#2a2a40';x.fillRect(w*.22,h*.07,w*.44,h*.28);x.strokeRect(w*.22,h*.07,w*.44,h*.28);
-  if(S.cur){const cs=S.cur.candles,mn=Math.min(...cs.map(a=>a.l)),mx=Math.max(...cs.map(a=>a.h)),bw=w*.44/cs.length;
+  if(S.cur&&S.cur.candles.length){const cs=S.cur.candles,mn=Math.min(...cs.map(a=>a.l)),mx=Math.max(...cs.map(a=>a.h)),bw=w*.44/cs.length;
     cs.forEach((a,i)=>{const Y=v=>h*.09+h*.24*(1-(v-mn)/(mx-mn||1));x.fillStyle=a.c>=a.o?'#2fe08a':'#ff5a3c';x.fillRect(w*.22+i*bw+1,Math.min(Y(a.o),Y(a.c)),bw-2,Math.max(1,Math.abs(Y(a.o)-Y(a.c))))})}
   x.fillStyle='#2fe08a';x.font='9px monospace';x.fillText(`${S.scanned} SCANNED · ${S.positions.length} OPEN · TICKET ${S.closed}`,w*.23,h*.065);
   // token avatars
@@ -252,40 +316,41 @@ function log(cls,txt){const d=document.createElement('div');d.innerHTML=`<span c
 
 /* ===== lógica do desk ===== */
 function move(k,spot){const d=desks[spot||k];bots[k].tx=d[0]+rnd(-.03,.03);bots[k].ty=d[1]+rnd(-.04,-.01)}
-function tickPositions(){
+async function tickPositions(){
+  if(DEMO)S.positions.forEach(p=>{p.px*=1+rnd(-.07,.085)+(p.t.shape-.5)*.015;p.t.px=p.px});else await refreshPrices();
   for(const p of S.positions.slice()){
-    p.px*=1+rnd(-.07,.085)+(p.t.shape-.5)*.015;p.age++;const r=p.px/p.entry-1;
-    let why=r>=CFG.takeProfit?'take-profit':r<=CFG.stopLoss?'stop-loss':p.age>=CFG.maxHoldTicks?'time-stop':null;
+    const r=p.px/p.entry-1,mins=(Date.now()-p.opened)/60000;
+    let why=r>=CFG.takeProfit?'take-profit':r<=CFG.stopLoss?'stop-loss':(DEMO?++p.age>=CFG.maxHoldTicks:mins>=CFG.maxHoldMin)?'time-stop':null;
     if(why){S.positions.splice(S.positions.indexOf(p),1);const pnl=p.size*r;S.cash+=p.size+pnl;S.closed++;if(pnl>0)S.wins++;S.vol.push(pnl);
       say('risk',`${why} ${p.t.name} ${r>=0?'+':''}${(r*100).toFixed(1)}%`);log(pnl>0?'w':'l',`CLOSE ${p.t.name} ${why} ${pnl>=0?'+':''}${money(pnl)}`);
       AG.risk.set('closed',`${S.wins}W ${S.closed-S.wins}L`,S.closed?S.wins/S.closed:0)}
   }
   if(S.pos&&S.cur&&S.positions.length)S.pos=S.positions.find(p=>p.t===S.cur)?.t.px;
 }
-function advClock(){S.t=new Date(S.t.getTime()+rnd(14,24)*60000);$('clock').textContent=S.t.toISOString().slice(11,16)+' UTC';
+function advClock(){if(DEMO)S.t=new Date(S.t.getTime()+rnd(14,24)*60000);else S.t=new Date();$('clock').textContent=S.t.toISOString().slice(11,16)+' UTC';
   $('day').textContent=`DAY ${S.day} · ${S.t.toUTCString().slice(8,11).toUpperCase()} ${S.t.getUTCDate()}`;$('balLabel').textContent=`BALANCE · DAY ${S.day} · ${S.lastPick}`}
 
 async function cycle(){
-  const t=genToken();S.cur=t;S.pos=null;S.stage=-1;S.failIdx=-1;S.scanned++;$('scanned').textContent=S.scanned+' SCANNED';
-  renderMeta(t);renderTh(t);renderChain();drawChart();advClock();tickPositions();
+  const t=await getToken();S.cur=t;S.pos=null;S.stage=-1;S.failIdx=-1;S.scanned++;$('scanned').textContent=S.scanned+' SCANNED';
+  renderMeta(t);renderTh(t);renderChain();drawChart();advClock();await tickPositions();
   // CRAWLER
   S.pages+=Math.floor(rnd(2,9));S.pts+=Math.floor(rnd(0,5));AG.crawler.set('pages / pts read',`${S.pages} / ${S.pts}`,Math.min(1,(S.scanned%10)/10));say('crawler','reading '+t.name+'…','scan');await sleep(900);
   // SCAN
   move('scan','scan');say('scan',`scanning ${t.name} · shape ${t.shape.toFixed(2)}`);AG.scan.set('shape_score',t.shape.toFixed(2),t.shape);await sleep(1100);
   // free_kill (hard)
   S.stage=0;renderTh(t);renderChain();
-  const hardFail=CFG.hard.find(([k,l,ty,m])=>ty==='min'?t[m]<l:t[m]>l);
+  const hardFail=CFG.hard.find(([k,l,ty,m])=>t[m]!=null&&(ty==='min'?t[m]<l:t[m]>l));
   if(hardFail){S.failIdx=0;renderChain();say('vet',`free_kill: ${hardFail[0]}`);log('l',`✗ ${t.name} killed by ${hardFail[0]}`);AG.vet.set('last kill',hardFail[0].replace('min_','').replace('max_',''),.2);
     move('scan');return finish()}
   // trade_kill — VET (chain risk)
-  await sleep(700);S.stage=1;renderChain();move('vet','vet');say('vet',`chain check ${t.name}`);AG.vet.set('dev_still_loaded',t.soft.dev_still_loaded.toFixed(2),t.soft.dev_still_loaded);await sleep(1000);
+  await sleep(700);S.stage=1;renderChain();move('vet','vet');say('vet',`pool ${t.dex||'check'} · liq $${fmt(t.liq)}`);AG.vet.set('liq / mcap',(t.liq/t.mcap).toFixed(2),t.liq/t.mcap*3);await sleep(1000);
   // shape_kill
   S.stage=2;renderChain();
   if(t.shape<CFG.shapeMin){S.failIdx=2;renderChain();say('scan','shape_kill: flat curve');log('l',`✗ ${t.name} shape_kill ${t.shape.toFixed(2)}`);return finish()}
   // soft_kill — SOCIAL
-  move('social','social');say('social',`@${t.name.toLowerCase()} recycled ${t.soft.recycled_account.toFixed(2)}`);AG.social.set('recycled_account',t.soft.recycled_account.toFixed(2),t.soft.recycled_account);await sleep(1000);
+  move('social','social');say('social',t.soft.account_is_the_project>=.7?`@${t.name.toLowerCase()} has an X account`:`no X account for ${t.name}`);AG.social.set('account_is_project',t.soft.account_is_the_project.toFixed(2),t.soft.account_is_the_project);await sleep(1000);
   S.stage=3;renderTh(t);renderChain();await sleep(900);
-  const softFail=CFG.soft.find(([k,l,ty])=>ty==='min'?t.soft[k]<l:t.soft[k]>l);
+  const softFail=CFG.soft.find(([k,l,ty])=>t.soft[k]!=null&&(ty==='min'?t.soft[k]<l:t.soft[k]>l));
   if(softFail){S.failIdx=3;renderChain();say('chief',`soft_kill: ${softFail[0]}`);log('l',`✗ ${t.name} soft_kill ${softFail[0]}`);return finish()}
   // pick — CHIEF → SIZE → FILLS
   S.stage=4;renderChain();S.lastPick=t.name;
@@ -293,9 +358,9 @@ async function cycle(){
   const pct=rnd(...CFG.ticketPct),eq=equity(),size=Math.min(S.cash*.95,eq*pct);
   if(size<50||S.positions.length>=5){say('size','no room — passing');log('l',`✗ ${t.name} no capital`);return finish()}
   move('size','size');say('size',`ticket ${(pct*100).toFixed(1)}% = ${money(size)}`);AG.size.set('ticket',money(size),pct/CFG.ticketPct[1]);await sleep(900);
-  move('fills','fills');const slip=rnd(.002,.02);say('fills',`bought ${t.name} · slip ${(slip*100).toFixed(2)}%`);
-  S.cash-=size;S.positions.push({t,size,entry:t.px*(1+slip),px:t.px,age:0});S.pos=t.px;AG.fills.set('open',S.positions.length+' pos',S.positions.length/5);
-  log('p',`BUY ${t.name} ${money(size)} @ ${t.px.toFixed(3)}`);await sleep(900);
+  move('fills','fills');const slip=DEMO?rnd(.002,.02):Math.min(.08,size/t.liq+.003);   // paper: slippage ~ ticket/liquidez + feesay('fills',`bought ${t.name} · slip ${(slip*100).toFixed(2)}%`);
+  S.cash-=size;S.positions.push({t,size,entry:t.px*(1+slip),px:t.px,age:0,opened:Date.now()});S.pos=t.px;AG.fills.set('open',S.positions.length+' pos',S.positions.length/5);
+  log('p',`BUY ${t.name} ${money(size)} @ ${t.px<.01?t.px.toExponential(2):t.px.toFixed(4)}`);await sleep(900);
   finish();
 }
 function finish(){
@@ -309,6 +374,7 @@ async function loop(){for(;;){await cycle();await sleep(500)}}
 
 /* ===== init ===== */
 CFG.hard.forEach(()=>{});
+if(DEMO)status('DEMO · SIMULADO',true);else status('A LIGAR À DEXSCREENER…',false);
 renderTh(null);renderChain();drawBal();
 addEventListener('resize',()=>{drawBal();drawChart()});
 requestAnimationFrame(drawOffice);
