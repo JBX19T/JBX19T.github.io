@@ -49,6 +49,22 @@ canvas{display:block;width:100%}
 .an .meta b{display:block;color:var(--txt);font-size:12px}
 .checks{display:grid;grid-template-columns:repeat(3,1fr);gap:4px 12px;font-size:10px;margin-top:8px}
 .checks div{display:flex;justify-content:space-between}
+.copy,.pm{padding:4px 12px 12px;font-size:11px}
+.copy form{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+input{background:#000;border:1px solid #333;color:#fff;padding:7px 9px;border-radius:5px;font:inherit;min-width:0}
+#faddr{flex:3 1 180px}#flabel{flex:1 1 90px}#pmStart{width:96px}
+button{background:#fff;color:#000;border:0;border-radius:5px;padding:7px 12px;font:700 11px ui-monospace,monospace;cursor:pointer}
+button.ghost{background:transparent;color:#aaa;border:1px solid #333;padding:3px 8px}
+button.ghost:hover{color:#fff;border-color:#fff}
+.fl{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 6px;border-radius:4px;border-bottom:1px solid var(--line)}
+.fl b{color:#fff}.fl small{color:var(--dim)}
+.note{color:var(--dim);font-size:10px;line-height:1.5;margin-top:6px}
+table{width:100%;border-collapse:collapse}
+th{color:var(--dim);font-weight:400;text-align:right;padding:3px 4px;font-size:10px}td{text-align:right;padding:4px;border-top:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+.cp{border:1px solid #fff;border-radius:3px;font-size:8px;padding:0 3px;margin-left:4px}
+.up{color:#fff}.dn{color:#8a8a8a}
+.pmbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;color:var(--dim)}
 .log{max-height:150px;overflow:auto;padding:4px 12px 10px;font-size:11px;line-height:1.7}
 .log .t{color:var(--dim)}.log .w{color:var(--green)}.log .l{color:var(--red)}.log .p{color:var(--hot)}
 .foot{color:#777;font-size:10px;text-align:center;margin-top:8px}
@@ -68,6 +84,21 @@ canvas{display:block;width:100%}
 <div class="panel"><div class="ph"><span>DESK</span><em id="deskinfo">PAPER TRADING · LIVE DATA</em></div><canvas id="office" height="430"></canvas></div>
 
 <div class="panel"><div class="ph"><span id="balLabel">BALANCE · DAY 1 · PAPER</span><em id="balPnl"></em></div><canvas id="bal" height="150"></canvas></div>
+
+<div class="two">
+  <div class="panel"><div class="ph"><span>COPY DESK · FOLLOW A WALLET</span><em id="copyInfo"></em></div>
+    <div class="copy">
+      <form id="fform"><input id="faddr" placeholder="carteira Solana a seguir" autocomplete="off" spellcheck="false"><input id="flabel" placeholder="nome" maxlength="16"><button>SEGUIR</button></form>
+      <div id="flist"></div>
+      <div class="note">O bot lê as trades públicas da carteira (via Helius). Cada compra nova vira um sinal: passa pelos mesmos filtros e só então entra na carteira de paper money. Quando a carteira vende, o Risk fecha a posição copiada. Não copia o histórico anterior.</div>
+    </div></div>
+  <div class="panel"><div class="ph"><span>PAPER MONEY · PORTFOLIO</span><em id="pmInfo"></em></div>
+    <div class="pm">
+      <div class="pmbar">Saldo inicial $<input id="pmStart" type="number" min="100" step="100"><button class="ghost" id="pmReset">REINICIAR</button></div>
+      <table><thead><tr><th>Asset</th><th>Entrada</th><th>Preço</th><th>Valor</th><th>P/L</th><th></th></tr></thead><tbody id="pbody"></tbody></table>
+      <div class="note" id="pempty">Sem posições abertas.</div>
+    </div></div>
+</div>
 
 <div class="two">
   <div class="panel"><div class="ph"><span>ANALYSIS</span><em id="scanned">0 SCANNED</em></div>
@@ -138,6 +169,7 @@ order.forEach(k=>{const a=AG[k];a.el=document.createElement('div');a.el.classNam
 });
 
 /* ===== estado ===== */
+try{const v=+localStorage.getItem('paperStart');if(v>=100)CFG.startBalance=v}catch(e){}
 const S={cash:CFG.startBalance,positions:[],hist:[CFG.startBalance],vol:[0],closed:0,wins:0,scanned:0,pages:0,pts:0,
   day:1,t:new Date(Date.UTC(2026,9,4,22,0)),cur:null,stage:-1,passed:[],failIdx:-1,lastPick:'PAPER'};
 const equity=()=>S.cash+S.positions.reduce((s,p)=>s+p.size*(p.px/p.entry),0);
@@ -190,7 +222,7 @@ async function refill(){
   fillBusy=false;
 }
 async function getToken(){
-  if(DEMO)return genToken();
+  if(DEMO)return queue.length?queue.shift():genToken();
   for(let tries=0;;tries++){
     if(!queue.length){refill();await sleep(1500);if(!queue.length&&tries>3){S.cur=null;status('A AGUARDAR DADOS…',false);await sleep(8000)}continue}
     const t=queue.shift();if(queue.length<5)refill();
@@ -216,6 +248,61 @@ async function refreshPrices(){
   for(const ch in by){try{const j=await jget(`${DS}/latest/dex/pairs/${ch}/${[...by[ch]].join(',')}`);
     (j.pairs||[]).forEach(q=>S.positions.filter(p=>p.t.pair===q.pairAddress).forEach(p=>{if(+q.priceUsd)p.px=p.t.px=+q.priceUsd}))}catch(e){}}
 }
+
+/* ===== COPY DESK: seguir carteiras Solana ===== */
+const WALLET_RE=/^[1-9A-HJ-NP-Za-km-z]{32,44}$/,POLL_MS=30000;
+const FOLLOW=(()=>{try{return JSON.parse(localStorage.getItem('follow')||'[]').map(f=>({...f,copied:0}))}catch(e){return[]}})();
+const saveF=()=>{try{localStorage.setItem('follow',JSON.stringify(FOLLOW.map(({addr,label})=>({addr,label}))))}catch(e){}};
+function renderFollow(){
+  $('flist').innerHTML=FOLLOW.length?FOLLOW.map((f,i)=>`<div class="fl"><span><b>${f.label}</b> <small>${f.addr.slice(0,4)}…${f.addr.slice(-4)} · ${f.err?'erro: '+f.err:f.seen?'a seguir':'a iniciar'}</small></span><span><small>${f.copied} copiadas</small> <button class="ghost" data-i="${i}">✕</button></span></div>`).join(''):'<div class="note">Ninguém a seguir. Cola o endereço de uma carteira Solana.</div>';
+  $('copyInfo').textContent=!DEMO&&!HOLDERS_API?'PRECISA DE ?holders=URL':FOLLOW.length+' CARTEIRAS';
+}
+$('fform').addEventListener('submit',e=>{e.preventDefault();const a=$('faddr').value.trim(),l=($('flabel').value.trim()||a.slice(0,4)).replace(/[<>&"]/g,'');
+  if(!DEMO&&!WALLET_RE.test(a)){$('faddr').style.borderColor='#fff';return}
+  if(FOLLOW.some(f=>f.addr===a))return;FOLLOW.push({addr:a||('demo'+FOLLOW.length),label:l,copied:0});saveF();$('faddr').value=$('flabel').value='';renderFollow();pollFollow()});
+$('flist').addEventListener('click',e=>{const i=e.target.dataset.i;if(i==null)return;FOLLOW.splice(+i,1);saveF();renderFollow()});
+async function enqueueCopy(f,mint){
+  if(seen.has('solana:'+mint)&&!S.positions.some(p=>p.t.addr===mint))seen.delete('solana:'+mint);   // sinal de cópia ignora "já visto"
+  if(queue.some(t=>t.addr===mint)||S.positions.some(p=>p.t.addr===mint))return;
+  try{const pairs=await jget(`${DS}/tokens/v1/solana/${mint}`);
+    const best=pairs.slice().sort((a,b)=>(b.liquidity?.usd||0)-(a.liquidity?.usd||0))[0],t=best&&mapPair(best);
+    if(!t){log('l',`copy ${f.label}: token sem par negociável`);return}
+    t.copyFrom=f.label;seen.add('solana:'+mint);queue.unshift(t);f.copied++;log('p',`COPY SIGNAL ${f.label} bought ${t.name}`)}
+  catch(e){log('l',`copy ${f.label}: ${e.message}`)}
+}
+function onFollowSwap(f,s){
+  if(s.side==='buy')return enqueueCopy(f,s.mint);
+  S.positions.filter(p=>p.copy===f.label&&p.t.addr===s.mint).forEach(p=>closePos(p,'follow-exit'));
+}
+async function pollFollow(){
+  if(DEMO)return demoFollow();
+  if(!HOLDERS_API)return;
+  for(const f of FOLLOW){
+    try{const j=await jget(`${HOLDERS_API}/wallet?address=${f.addr}`);f.err=null;const first=!f.seen;f.seen??=new Set();
+      for(const s of j.swaps.slice().reverse()){const k=s.signature+s.side+s.mint;if(f.seen.has(k))continue;f.seen.add(k);if(!first)await onFollowSwap(f,s)}
+    }catch(e){f.err=e.message}}
+  renderFollow();
+}
+function demoFollow(){   // simula carteiras seguidas
+  if(!FOLLOW.length){FOLLOW.push({addr:'demo',label:'demo whale',copied:0,seen:true});renderFollow()}
+  const f=FOLLOW[0];
+  if(Math.random()<.5){const t=genToken();t.copyFrom=f.label;t.addr='demo'+Math.random();queue.unshift(t);f.copied++;log('p',`COPY SIGNAL ${f.label} bought ${t.name}`);renderFollow()}
+  else{const p=S.positions.find(p=>p.copy===f.label);if(p)closePos(p,'follow-exit')}
+}
+
+/* ===== portfólio (paper money) ===== */
+const fpx=v=>v<.01?v.toExponential(2):v.toFixed(4);
+function renderPortfolio(){
+  const e=equity();$('pmInfo').textContent=`CASH ${money(S.cash)} · EQUITY ${money(e)}`;
+  $('pbody').innerHTML=S.positions.map((p,i)=>{const val=p.size*p.px/p.entry,pl=val-p.size;
+    return `<tr><td>${p.t.name}${p.copy?`<span class="cp" title="copiado de ${p.copy}">COPY</span>`:''}</td><td>${fpx(p.entry)}</td><td>${fpx(p.px)}</td><td>${money(val)}</td><td class="${pl>=0?'up':'dn'}">${pl>=0?'+':''}${money(pl)} (${(pl/p.size*100).toFixed(1)}%)</td><td><button class="ghost" data-i="${i}" title="fechar">✕</button></td></tr>`}).join('');
+  $('pempty').style.display=S.positions.length?'none':'block';
+}
+$('pbody').addEventListener('click',e=>{const i=e.target.dataset.i;if(i!=null&&S.positions[+i])closePos(S.positions[+i],'manual')});
+$('pmStart').value=CFG.startBalance;
+$('pmReset').addEventListener('click',()=>{const v=+$('pmStart').value;if(!(v>=100))return;if(!confirm(`Reiniciar a carteira de paper money com $${v}?`))return;
+  CFG.startBalance=v;try{localStorage.setItem('paperStart',v)}catch(e){}
+  S.cash=v;S.positions=[];S.hist=[v];S.vol=[0];S.closed=S.wins=0;renderPortfolio();drawBal()});
 
 /* ===== modo demo (?demo): gerador aleatório, sem rede ===== */
 function genToken(){
@@ -332,16 +419,20 @@ function log(cls,txt){const d=document.createElement('div');d.innerHTML=`<span c
 
 /* ===== lógica do desk ===== */
 function move(k,spot){const d=desks[spot||k];bots[k].tx=d[0]+rnd(-.03,.03);bots[k].ty=d[1]+rnd(-.04,-.01)}
+function closePos(p,why){
+  const r=p.px/p.entry-1;S.positions.splice(S.positions.indexOf(p),1);const pnl=p.size*r;S.cash+=p.size+pnl;S.closed++;if(pnl>0)S.wins++;S.vol.push(pnl);
+  say('risk',`${why} ${p.t.name} ${r>=0?'+':''}${(r*100).toFixed(1)}%`);log(pnl>0?'w':'l',`CLOSE ${p.t.name} ${why}${p.copy?' (copy '+p.copy+')':''} ${pnl>=0?'+':''}${money(pnl)}`);
+  AG.risk.set('closed',`${S.wins}W ${S.closed-S.wins}L`,S.closed?S.wins/S.closed:0);renderPortfolio();
+}
 async function tickPositions(){
   if(DEMO)S.positions.forEach(p=>{p.px*=1+rnd(-.07,.085)+(p.t.shape-.5)*.015;p.t.px=p.px});else await refreshPrices();
   for(const p of S.positions.slice()){
     const r=p.px/p.entry-1,mins=(Date.now()-p.opened)/60000;
     let why=r>=CFG.takeProfit?'take-profit':r<=CFG.stopLoss?'stop-loss':(DEMO?++p.age>=CFG.maxHoldTicks:mins>=CFG.maxHoldMin)?'time-stop':null;
-    if(why){S.positions.splice(S.positions.indexOf(p),1);const pnl=p.size*r;S.cash+=p.size+pnl;S.closed++;if(pnl>0)S.wins++;S.vol.push(pnl);
-      say('risk',`${why} ${p.t.name} ${r>=0?'+':''}${(r*100).toFixed(1)}%`);log(pnl>0?'w':'l',`CLOSE ${p.t.name} ${why} ${pnl>=0?'+':''}${money(pnl)}`);
-      AG.risk.set('closed',`${S.wins}W ${S.closed-S.wins}L`,S.closed?S.wins/S.closed:0)}
+    if(why)closePos(p,why);
   }
   if(S.pos&&S.cur&&S.positions.length)S.pos=S.positions.find(p=>p.t===S.cur)?.t.px;
+  renderPortfolio();
 }
 function advClock(){if(DEMO)S.t=new Date(S.t.getTime()+rnd(14,24)*60000);else S.t=new Date();$('clock').textContent=S.t.toISOString().slice(11,16)+' UTC';
   $('day').textContent=`DAY ${S.day} · ${S.t.toUTCString().slice(8,11).toUpperCase()} ${S.t.getUTCDate()}`;$('balLabel').textContent=`BALANCE · DAY ${S.day} · ${S.lastPick}`}
@@ -349,6 +440,7 @@ function advClock(){if(DEMO)S.t=new Date(S.t.getTime()+rnd(14,24)*60000);else S.
 async function cycle(){
   const t=await getToken();S.cur=t;S.pos=null;S.stage=-1;S.failIdx=-1;S.scanned++;$('scanned').textContent=S.scanned+' SCANNED';
   renderMeta(t);renderTh(t);renderChain();drawChart();advClock();await tickPositions();
+  if(t.copyFrom){log('p',`SIGNAL ${t.name} ← ${t.copyFrom}`);say('chief',`copy signal ← ${t.copyFrom}`,'scan')}
   // CRAWLER
   S.pages+=Math.floor(rnd(2,9));S.pts+=Math.floor(rnd(0,5));AG.crawler.set('pages / pts read',`${S.pages} / ${S.pts}`,Math.min(1,(S.scanned%10)/10));say('crawler','reading '+t.name+'…','scan');await sleep(900);
   // SCAN
@@ -378,8 +470,8 @@ async function cycle(){
   if(size<50||S.positions.length>=5){say('size','no room — passing');log('l',`✗ ${t.name} no capital`);return finish()}
   move('size','size');say('size',`ticket ${(pct*100).toFixed(1)}% = ${money(size)}`);AG.size.set('ticket',money(size),pct/CFG.ticketPct[1]);await sleep(900);
   move('fills','fills');const slip=DEMO?rnd(.002,.02):Math.min(.08,size/t.liq+.003);   // paper: slippage ~ ticket/liquidez + feesay('fills',`bought ${t.name} · slip ${(slip*100).toFixed(2)}%`);
-  S.cash-=size;S.positions.push({t,size,entry:t.px*(1+slip),px:t.px,age:0,opened:Date.now()});S.pos=t.px;AG.fills.set('open',S.positions.length+' pos',S.positions.length/5);
-  log('p',`BUY ${t.name} ${money(size)} @ ${t.px<.01?t.px.toExponential(2):t.px.toFixed(4)}`);await sleep(900);
+  S.cash-=size;S.positions.push({t,size,entry:t.px*(1+slip),px:t.px,age:0,opened:Date.now(),copy:t.copyFrom||null});S.pos=t.px;AG.fills.set('open',S.positions.length+' pos',S.positions.length/5);
+  renderPortfolio();log('p',`BUY ${t.name}${t.copyFrom?' (copy ← '+t.copyFrom+')':''} ${money(size)} @ ${t.px<.01?t.px.toExponential(2):t.px.toFixed(4)}`);await sleep(900);
   finish();
 }
 function finish(){
@@ -394,7 +486,8 @@ async function loop(){for(;;){await cycle();await sleep(500)}}
 /* ===== init ===== */
 CFG.hard.forEach(()=>{});
 if(DEMO)status('DEMO · SIMULADO',true);else status('A LIGAR À DEXSCREENER…',false);
-renderTh(null);renderChain();drawBal();
+renderTh(null);renderChain();drawBal();renderFollow();renderPortfolio();
+setInterval(pollFollow,DEMO?20000:POLL_MS);setTimeout(pollFollow,2000);
 addEventListener('resize',()=>{drawBal();drawChart()});
 requestAnimationFrame(drawOffice);
 if('serviceWorker' in navigator&&!window.Capacitor&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});

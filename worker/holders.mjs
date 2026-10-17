@@ -1,4 +1,5 @@
 // Cloudflare Worker: proxy de holders (Helius) para o DOLLOS Trade Bot. A chave fica em env.HELIUS_API_KEY (segredo).
+// GET /wallet?address=<carteira>  ->  { address, swaps:[{signature,timestamp,side,mint}] }  (trades que o bot pode copiar)
 // GET /holders?mint=<mint solana>  ->  { topWallet, top10, mintAuthority, freezeAuthority, supply, excluded }
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SYSTEM = '11111111111111111111111111111111';
@@ -9,6 +10,27 @@ const KNOWN_POOL_OWNERS = new Set([
   'CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM',
   'GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR',
 ]);
+
+// Normaliza swaps da Helius Enhanced Transactions -> [{signature,timestamp,side:'buy'|'sell',mint}]
+const BASE = new Set([
+  'So11111111111111111111111111111111111111112',   // SOL
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',  // USDC
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',  // USDT
+]);
+export function parseSwaps(txs) {
+  const out = [];
+  for (const tx of txs || []) {
+    const sw = tx?.events?.swap;
+    if (!sw) continue;
+    const ins = (sw.tokenInputs || []).map(t => t.mint);
+    const outs = (sw.tokenOutputs || []).map(t => t.mint);
+    if (sw.nativeInput) ins.push([...BASE][0]);
+    if (sw.nativeOutput) outs.push([...BASE][0]);
+    for (const m of outs) if (!BASE.has(m)) out.push({ signature: tx.signature, timestamp: tx.timestamp, side: 'buy', mint: m });
+    for (const m of ins) if (!BASE.has(m)) out.push({ signature: tx.signature, timestamp: tx.timestamp, side: 'sell', mint: m });
+  }
+  return out;
+}
 
 export async function analyze(mint, rpc) {
   const [largest, mintInfo] = await rpc([
@@ -57,8 +79,23 @@ export default {
     };
     const json = (b, s = 200, extra = {}) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json', ...cors, ...extra } });
     if (req.method === 'OPTIONS') return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET' } });
-    if (url.pathname !== '/holders') return json({ error: 'not found' }, 404);
+    if (url.pathname !== '/holders' && url.pathname !== '/wallet') return json({ error: 'not found' }, 404);
     if (allowed.length && !allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403);
+    if (url.pathname === '/wallet') {
+      const address = url.searchParams.get('address') || '';
+      if (!B58.test(address)) return json({ error: 'bad address' }, 400);
+      if (!env.HELIUS_API_KEY) return json({ error: 'server not configured' }, 500);
+      const ck = new Request(url.origin + '/wallet?address=' + address), c = caches.default;
+      const h = await c.match(ck);
+      if (h) return new Response(h.body, { headers: { 'content-type': 'application/json', ...cors, 'x-cache': 'HIT' } });
+      try {
+        const r = await fetch(`https://api.helius.xyz/v0/addresses/${address}/transactions?type=SWAP&limit=15&api-key=${env.HELIUS_API_KEY}`);
+        if (!r.ok) throw new Error('helius ' + r.status);
+        const body = JSON.stringify({ address, swaps: parseSwaps(await r.json()) });
+        ctx.waitUntil(c.put(ck, new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=20' } })));
+        return new Response(body, { headers: { 'content-type': 'application/json', ...cors, 'x-cache': 'MISS' } });
+      } catch (e) { return json({ error: String(e.message || e) }, 502); }
+    }
     const mint = url.searchParams.get('mint') || '';
     if (!B58.test(mint)) return json({ error: 'bad mint' }, 400);
     if (!env.HELIUS_API_KEY) return json({ error: 'server not configured' }, 500);
