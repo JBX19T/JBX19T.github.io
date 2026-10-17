@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#e04bd0">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>GROKBOT + JEV</title>
 <style>
 :root{--pink:#e04bd0;--bg:#07070d;--card:#0d0d14;--line:#1c1c2a;--txt:#cfd3e6;--dim:#5a5e75;--green:#2fe08a;--red:#ff4b5c;--blue:#2f7bff;--orange:#ffa31a;--hot:#ff3d8b}
@@ -144,7 +148,9 @@ const DS='https://api.dexscreener.com',GT='https://api.geckoterminal.com/api/v2'
 const GT_NET={solana:'solana',ethereum:'eth',base:'base',bsc:'bsc',arbitrum:'arbitrum',polygon:'polygon_pos',avalanche:'avax',optimism:'optimism'};
 const CHAINS=['solana','base','ethereum','bsc'];   // chains aceites pelo desk
 /* URL do proxy Helius (worker/holders.mjs). Podes definir aqui ou com ?holders=https://...workers.dev */
-const HOLDERS_API=(()=>{const q=new URLSearchParams(location.search).get('holders');return /^https:\/\//.test(q||'')?q.replace(/\/$/,''):'';})()||'';
+const HOLDERS_API=(()=>{const ok=v=>/^https:\/\//.test(v||'')?v.replace(/\/$/,''):'';
+  const q=ok(new URLSearchParams(location.search).get('holders'));
+  try{if(q)localStorage.setItem('holders',q);return q||ok(localStorage.getItem('holders'))}catch(e){return q}})();   // ?holders= fica guardado (útil na app instalada)
 const queue=[],seen=new Set();let lastFill=0,fillBusy=false;
 const status=(t,ok)=>{const e=$('src');e.textContent=t;e.style.color=ok?'#2fe08a':'#ff4b5c'};
 async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status+' '+u.split('?')[0]);return r.json()}
@@ -390,6 +396,7 @@ if(DEMO)status('DEMO · SIMULADO',true);else status('A LIGAR À DEXSCREENER…',
 renderTh(null);renderChain();drawBal();
 addEventListener('resize',()=>{drawBal();drawChart()});
 requestAnimationFrame(drawOffice);
+if('serviceWorker' in navigator&&!window.Capacitor&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 loop();
 </script>
 </body>

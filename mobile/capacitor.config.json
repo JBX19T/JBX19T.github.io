@@ -1,0 +1,7 @@
+{
+  "appId": "com.jbx19t.grokbot",
+  "appName": "GROKBOT",
+  "webDir": "www",
+  "server": { "androidScheme": "https" },
+  "plugins": { "CapacitorHttp": { "enabled": true } }
+}
