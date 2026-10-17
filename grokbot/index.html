@@ -99,7 +99,7 @@ th:first-child,td:first-child{text-align:left}
 <body>
 <div class="wrap">
 <header>
-  <img class="logo" src="logo.png" alt="DOLLOS">
+  <img class="logo" src="logo.svg" alt="DOLLOS">
   <h1>DOLLOS TRADE BOT</h1><div class="tag">READ FIRST · TRADE LAST</div>
   <div class="day" id="src" style="font-weight:700">…</div><div class="day" id="day"></div><div class="clock" id="clock">--:-- UTC</div>
 </header>
@@ -407,7 +407,7 @@ function drawChart(){
 
 /* ===== escritório (canvas) ===== */
 const desks={chief:[.11,.62],scan:[.30,.62],vet:[.50,.62],social:[.70,.62],size:[.22,.82],fills:[.78,.34],risk:[.40,.84],crawler:[.55,.22]};
-const LOGO=new Image();LOGO.src='logo.png';
+const LOGO=new Image();LOGO.src='logo.svg';
 const bots={};order.forEach(k=>{if(AG[k].shape==='none')return;const d=desks[k];bots[k]={x:d[0],y:d[1],tx:d[0],ty:d[1],bub:'',bt:0}});
 let link=null;
 function say(k,txt,target){if(bots[k]){bots[k].bub=txt;bots[k].bt=performance.now()+2600}AG[k].say(txt);AG[k].flash();link={from:k,to:target||'chief',t:performance.now()}}
