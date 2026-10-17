@@ -9,19 +9,19 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>DOLLOS Trade Bot</title>
 <style>
-:root{--pink:#000;--bg:#000;--card:#070707;--line:#202020;--txt:#e6e6e6;--dim:#6a6a6a;--green:#fff;--red:#777;--blue:#d9d9d9;--orange:#cfcfcf;--hot:#fff;--glow:0 0 6px rgba(255,255,255,.22)}
+:root{--pink:#000;--bg:#000;--card:#070707;--line:#202020;--txt:#e6e6e6;--dim:#6a6a6a;--green:#fff;--red:#777;--blue:#d9d9d9;--orange:#cfcfcf;--hot:#fff}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:radial-gradient(ellipse 70% 38% at 50% 0,#1d1d1d 0,#000 70%) no-repeat #000;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--txt);min-height:100vh;padding:12px}
+body{background:#000;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--txt);min-height:100vh;padding:12px}
 .wrap{max-width:1180px;margin:0 auto}
 header{display:flex;align-items:center;gap:14px;margin-bottom:12px;color:#fff}
-header h1{font:800 26px/1 system-ui,sans-serif;letter-spacing:3px;text-shadow:var(--glow)}
+header h1{font:800 26px/1 system-ui,sans-serif;letter-spacing:3px}
 header .tag{font-size:11px;letter-spacing:2px;opacity:.55;flex:1}
 header .day{font-size:11px;opacity:.6}
-.clock{background:#000;border:1px solid #333;color:#fff;text-shadow:var(--glow);padding:7px 12px;border-radius:6px;font-weight:700;font-size:17px}
-.logo{height:58px;width:auto;opacity:.92}
+.clock{background:#000;border:1px solid #333;color:#fff;padding:7px 12px;border-radius:6px;font-weight:700;font-size:17px}
+.logo{height:58px;width:auto}
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px}
 .card{background:var(--card);border-radius:8px;padding:10px 12px;min-height:84px;border-left:3px solid var(--c);position:relative;transition:box-shadow .2s}
-.card.on{box-shadow:0 0 0 1px var(--c),0 0 14px -4px rgba(255,255,255,.3)}
+.card.on{box-shadow:0 0 0 1px var(--c)}
 .card h3{font:800 17px system-ui,sans-serif;color:var(--c);display:flex;align-items:center;gap:8px}
 .card h3 i{width:16px;height:16px;border-radius:50%;background:var(--c);display:inline-block}
 .card small{display:block;color:var(--dim);font-size:9.5px;margin-top:2px}
@@ -44,7 +44,7 @@ canvas{display:block;width:100%}
 .th .r.fail{background:#1c1c1c}.th .ok{color:var(--green)}.th .no{color:var(--red)}
 .chain{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line);font-size:10px;align-items:center;color:var(--dim)}
 .chain span.p{border:1px solid var(--line);padding:3px 8px;border-radius:4px}
-.chain span.p.on{background:#fff;color:#000;border-color:#fff;box-shadow:var(--glow);font-weight:700}
+.chain span.p.on{background:#fff;color:#000;border-color:#fff;font-weight:700}
 .chain span.p.pass{color:var(--green);border-color:#444444}
 .an{padding:0 12px 12px}
 .an .meta{display:flex;gap:16px;flex-wrap:wrap;font-size:10px;color:var(--dim);margin-bottom:6px}
@@ -389,8 +389,8 @@ function drawBal(){
   x.beginPath();d.forEach((v,i)=>i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v)));x.strokeStyle='#ffffff';x.lineWidth=2;x.stroke();
   x.lineTo(X(d.length-1),ph);x.lineTo(X(0),ph);x.fillStyle=g;x.fill();
   const bw=Math.max(2,(w-pl-pr)/Math.max(d.length,30)-1);S.vol.forEach((v,i)=>{x.fillStyle=v>=0?'rgba(255,255,255,.55)':'rgba(120,120,120,.5)';const bh=Math.min(18,Math.abs(v)*3+2);x.fillRect(X(i)-bw/2,h-bh,bw,bh)});
-  const e=equity();x.shadowColor='rgba(255,255,255,.3)';x.shadowBlur=6;x.fillStyle='#ffffff';x.font=`bold ${narrow?18:22}px system-ui`;
-  if(narrow){x.textAlign='right';x.fillText(money(e),w-10,24);x.textAlign='left'}else x.fillText(money(e),w-pr+14,h/2);x.shadowBlur=0;
+  const e=equity();x.fillStyle='#ffffff';x.font=`bold ${narrow?18:22}px system-ui`;
+  if(narrow){x.textAlign='right';x.fillText(money(e),w-10,24);x.textAlign='left'}else x.fillText(money(e),w-pr+14,h/2);
   if(!narrow){x.fillStyle='#6a6a6a';x.font='9px monospace';x.fillText('BALANCE',w-pr+14,h/2-26)}
   const pnl=e-CFG.startBalance;$('balPnl').textContent=`${S.wins}W ${S.closed-S.wins}L · ${pnl>=0?'+':''}${(pnl/CFG.startBalance*100).toFixed(2)}%`;
 }
@@ -418,7 +418,7 @@ function drawOffice(ts){
   const c=$('office'),narrow=c.clientWidth<600,[x,w,h]=setup(c,narrow?330:430),dw=Math.min(68,w*.15),br=narrow?10:13;x.fillStyle='#050505';x.fillRect(0,0,w,h);
   x.strokeStyle='#121212';x.lineWidth=1;for(let i=0;i<w;i+=32){x.beginPath();x.moveTo(i,0);x.lineTo(i,h);x.stroke()}for(let j=0;j<h;j+=32){x.beginPath();x.moveTo(0,j);x.lineTo(w,j);x.stroke()}
   // logo + monitor
-  if(LOGO.complete&&LOGO.naturalWidth){const lw=Math.min(w*.2,190),lh=lw*LOGO.naturalHeight/LOGO.naturalWidth;x.globalAlpha=.9;x.drawImage(LOGO,w*.03,h*.05,lw,lh);x.globalAlpha=1}
+  if(LOGO.complete&&LOGO.naturalWidth){const lw=Math.min(w*.17,170),lh=lw*LOGO.naturalHeight/LOGO.naturalWidth;x.globalAlpha=1;x.drawImage(LOGO,w*.03,h*.05,lw,lh);x.globalAlpha=1}
   x.fillStyle='#0a0a0a';x.strokeStyle='#333333';x.fillRect(w*.22,h*.07,w*.44,h*.28);x.strokeRect(w*.22,h*.07,w*.44,h*.28);
   if(S.cur&&S.cur.candles.length){const cs=S.cur.candles,mn=Math.min(...cs.map(a=>a.l)),mx=Math.max(...cs.map(a=>a.h)),bw=w*.44/cs.length;
     cs.forEach((a,i)=>{const Y=v=>h*.09+h*.24*(1-(v-mn)/(mx-mn||1));x.fillStyle=a.c>=a.o?'#ffffff':'#555';x.fillRect(w*.22+i*bw+1,Math.min(Y(a.o),Y(a.c)),bw-2,Math.max(1,Math.abs(Y(a.o)-Y(a.c))))})}
