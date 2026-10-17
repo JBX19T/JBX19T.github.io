@@ -76,7 +76,7 @@ canvas{display:block;width:100%}
 </div>
 
 <div class="panel"><div class="ph"><span>TRADE LOG</span><em>PAPER</em></div><div class="log" id="log"></div></div>
-<div class="foot">Paper trading: preços e liquidez reais da DexScreener, ordens simuladas (sem dinheiro real). Sem dados de holders/dev na DexScreener: esses filtros mostram n/a e são ignorados. Junta <b>?demo</b> ao URL para o modo simulado offline.</div>
+<div class="foot">Paper trading: preços e liquidez reais da DexScreener, ordens simuladas (sem dinheiro real). Holders via Helius (proxy) só em Solana e se configurado com <b>?holders=URL</b>; sem isso, os filtros de holders/dev mostram n/a e são ignorados. Junta <b>?demo</b> ao URL para o modo simulado offline.</div>
 </div>
 
 <script>
@@ -143,6 +143,8 @@ const DEMO=new URLSearchParams(location.search).has('demo');
 const DS='https://api.dexscreener.com',GT='https://api.geckoterminal.com/api/v2';
 const GT_NET={solana:'solana',ethereum:'eth',base:'base',bsc:'bsc',arbitrum:'arbitrum',polygon:'polygon_pos',avalanche:'avax',optimism:'optimism'};
 const CHAINS=['solana','base','ethereum','bsc'];   // chains aceites pelo desk
+/* URL do proxy Helius (worker/holders.mjs). Podes definir aqui ou com ?holders=https://...workers.dev */
+const HOLDERS_API=(()=>{const q=new URLSearchParams(location.search).get('holders');return /^https:\/\//.test(q||'')?q.replace(/\/$/,''):'';})()||'';
 const queue=[],seen=new Set();let lastFill=0,fillBusy=false;
 const status=(t,ok)=>{const e=$('src');e.textContent=t;e.style.color=ok?'#2fe08a':'#ff4b5c'};
 async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status+' '+u.split('?')[0]);return r.json()}
@@ -194,6 +196,13 @@ async function loadCandles(t){
     const L=j.data.attributes.ohlcv_list.slice().reverse(),mv=Math.max(...L.map(x=>x[5]))||1;
     t.candles=L.map(x=>({o:x[1],h:x[2],l:x[3],c:x[4],v:x[5]/mv}))}catch(e){t.candles=[]}
 }
+/* holders reais (Solana) via proxy Helius: top wallet, top 10 (sem pools/programas) e autoridades do mint */
+async function loadHolders(t){
+  if(!HOLDERS_API||t.chain!=='solana'||t.holdersTried)return;t.holdersTried=true;
+  try{const h=await jget(`${HOLDERS_API}/holders?mint=${t.addr}`);
+    t.topWallet=h.topWallet;t.top10=h.top10;t.mintAuth=h.mintAuthority;t.freezeAuth=h.freezeAuthority;t.holdersOk=true;
+  }catch(e){log('l',`holders ${t.name}: ${e.message}`)}
+}
 /* preços reais das posições abertas */
 async function refreshPrices(){
   if(DEMO||!S.positions.length)return;
@@ -242,7 +251,7 @@ function renderChain(){
 function renderMeta(t){
   $('meta').innerHTML=`<div><b>${t.url?`<a href="${t.url}" target="_blank" rel="noopener" style="color:inherit">${t.name}</a>`:t.name}</b>${t.chain||'token'}</div><div><b>$${fmt(t.mcap)}</b>mcap</div><div><b>$${fmt(t.liq)}</b>liquidity</div><div><b>$${fmt(t.vol)}</b>vol 24h</div><div><b>${t.trades}</b>trades</div><div><b>${t.age>=1440?Math.floor(t.age/1440)+'d':t.age+'m'}</b>age</div>`;
   const names=['liquidity depth','holder spread','volume vs mcap','rug signature','fresh wallets','entry window'];
-  const sf=t.soft,vals=[t.liq/t.mcap>.12,t.top10==null?null:t.top10<.65,t.vol/t.mcap>.4,sf.dev_still_loaded==null?null:sf.dev_still_loaded<.55,sf.recycled_account==null?null:sf.recycled_account<.5,t.shape>.4];
+  const sf=t.soft,vals=[t.liq/t.mcap>.12,t.top10==null?null:t.top10<.65,t.vol/t.mcap>.4,t.holdersOk?!(t.mintAuth||t.freezeAuth):sf.dev_still_loaded==null?null:sf.dev_still_loaded<.55,sf.recycled_account==null?null:sf.recycled_account<.5,t.shape>.4];
   $('checks').innerHTML=names.map((n,i)=>{const v=vals[i],c=v==null?'var(--dim)':v?'var(--green)':'var(--red)';return `<div><span>${n}</span><b style="color:${c}">${v==null?'N/A':v?'PASS':'FAIL'}</b></div>`}).join('');
 }
 
@@ -339,11 +348,14 @@ async function cycle(){
   move('scan','scan');say('scan',`scanning ${t.name} · shape ${t.shape.toFixed(2)}`);AG.scan.set('shape_score',t.shape.toFixed(2),t.shape);await sleep(1100);
   // free_kill (hard)
   S.stage=0;renderTh(t);renderChain();
-  const hardFail=CFG.hard.find(([k,l,ty,m])=>t[m]!=null&&(ty==='min'?t[m]<l:t[m]>l));
+  const hardCheck=()=>CFG.hard.find(([k,l,ty,m])=>t[m]!=null&&(ty==='min'?t[m]<l:t[m]>l));
+  let hardFail=hardCheck();
+  if(!hardFail&&HOLDERS_API&&t.chain==='solana'){say('vet',`reading holders of ${t.name}…`,'scan');await loadHolders(t);renderTh(t);renderMeta(t);hardFail=hardCheck()}
   if(hardFail){S.failIdx=0;renderChain();say('vet',`free_kill: ${hardFail[0]}`);log('l',`✗ ${t.name} killed by ${hardFail[0]}`);AG.vet.set('last kill',hardFail[0].replace('min_','').replace('max_',''),.2);
     move('scan');return finish()}
   // trade_kill — VET (chain risk)
-  await sleep(700);S.stage=1;renderChain();move('vet','vet');say('vet',`pool ${t.dex||'check'} · liq $${fmt(t.liq)}`);AG.vet.set('liq / mcap',(t.liq/t.mcap).toFixed(2),t.liq/t.mcap*3);await sleep(1000);
+  await sleep(700);S.stage=1;renderChain();move('vet','vet');say('vet',`pool ${t.dex||'check'} · liq $${fmt(t.liq)}`);t.top10!=null?AG.vet.set('top 10 holders',(t.top10*100).toFixed(1)+'%',t.top10):AG.vet.set('liq / mcap',(t.liq/t.mcap).toFixed(2),t.liq/t.mcap*3);await sleep(1000);
+  if(t.holdersOk&&(t.mintAuth||t.freezeAuth)){const why=t.mintAuth?'mint_authority_active':'freeze_authority_active';S.failIdx=1;renderChain();say('vet',`trade_kill: ${why}`);log('l',`✗ ${t.name} trade_kill ${why}`);AG.vet.set('last kill',why,.9);return finish()}
   // shape_kill
   S.stage=2;renderChain();
   if(t.shape<CFG.shapeMin){S.failIdx=2;renderChain();say('scan','shape_kill: flat curve');log('l',`✗ ${t.name} shape_kill ${t.shape.toFixed(2)}`);return finish()}

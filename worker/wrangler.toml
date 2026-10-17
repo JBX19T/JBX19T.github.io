@@ -1,0 +1,9 @@
+name = "grokbot-holders"
+main = "holders.mjs"
+compatibility_date = "2025-01-01"
+
+[vars]
+# origens autorizadas a chamar o proxy (separadas por vírgula)
+ALLOWED_ORIGIN = "https://jbx19t.github.io"
+
+# A chave NÃO vai aqui. Guarda-a como segredo:  npx wrangler secret put HELIUS_API_KEY
