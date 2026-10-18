@@ -28,25 +28,9 @@ const fmtPx=(m,v)=>v==null?'—':v.toFixed(m.dec);
 const usd=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 
 /* ===== indicadores e estratégia (puros, testáveis) ===== */
-function ema(a,n){if(a.length<n)return null;const k=2/(n+1);let e=a.slice(0,n).reduce((s,v)=>s+v,0)/n;for(let i=n;i<a.length;i++)e=a[i]*k+e*(1-k);return e}
-function atr(bars,n){if(bars.length<n+1)return null;let s=0;for(let i=bars.length-n;i<bars.length;i++){const b=bars[i],pc=bars[i-1].c;s+=Math.max(b.h-b.l,Math.abs(b.h-pc),Math.abs(b.l-pc))}return s/n}
-/* tendência (EMA rápida vs lenta) + rompimento do máximo/mínimo das últimas N velas + filtro de volatilidade */
-function signal(bars){
-  const need=Math.max(CFG.slow,CFG.brk+1,CFG.atrN+1)+1;
-  if(bars.length<need)return{dir:'wait',why:`velas ${bars.length}/${need}`};
-  const c=bars.map(b=>b.c),last=bars[bars.length-1],f=ema(c,CFG.fast),s=ema(c,CFG.slow),a=atr(bars,CFG.atrN);
-  const prev=bars.slice(-CFG.brk-1,-1),hi=Math.max(...prev.map(b=>b.h)),lo=Math.min(...prev.map(b=>b.l));
-  const ap=a/last.c;
-  if(ap<CFG.minATRpct)return{dir:'flat',why:'volatilidade muito baixa',atr:a};
-  if(ap>CFG.maxATRpct)return{dir:'flat',why:'volatilidade extrema',atr:a};
-  if(f>s&&last.c>hi)return{dir:'long',why:'tendência de alta + rompe máximo',atr:a};
-  if(f<s&&last.c<lo)return{dir:'short',why:'tendência de baixa + rompe mínimo',atr:a};
-  return{dir:'flat',why:f>s?'alta, sem rompimento':'baixa, sem rompimento',atr:a};
-}
-const cost=()=>CFG.costBps/1e4;
+const {ema,atr,signal,cost,sizeFor}=DSTRAT.make(CFG,MK.length);   // regras em strategy.js, partilhadas com o teste histórico
 function unreal(p,px){return p.side*(px-p.entry)/p.entry*p.notional}
 function equity(){let e=S.cash;for(const k in S.pos){const px=P[k].px;if(px!=null)e+=unreal(S.pos[k],px)}return e}
-function sizeFor(eq,entry,stopDist){const riskUsd=eq*CFG.riskPct,n=riskUsd/(stopDist/entry);return Math.min(n,eq*CFG.maxLev/MK.length)}
 function open(m,dir,sig){
   const p=P[m.key],px=p.px,side=dir==='long'?1:-1,entry=px*(1+side*cost()),stopDist=CFG.stopATR*sig.atr;
   const notional=sizeFor(equity(),entry,stopDist);if(!(notional>1))return;

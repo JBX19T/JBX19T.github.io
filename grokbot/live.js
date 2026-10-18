@@ -123,6 +123,7 @@ function bind(){
   }
   setInterval(tick,5000);setTimeout(tick,2000);
 }
-window.LIVE={hlDesired,solDesired,L,P,sync,flatten};
+const setToken=t=>{L.token=t;save();for(const k of ['hl','sol'])render(k)};
+window.LIVE={hlDesired,solDesired,L,P,sync,flatten,setToken};
 if($l('hlBody'))bind();
 })();

@@ -3,7 +3,7 @@ name: Worker (testes e deploy)
 on:
   push:
     branches: [main, 'ccr-**']
-    paths: ['worker/**', '.github/workflows/worker.yml']
+    paths: ['worker/**', 'grokbot/strategy.js', 'grokbot/backtest.js', '.github/workflows/worker.yml']
   pull_request:
     paths: ['worker/**']
   workflow_dispatch:
