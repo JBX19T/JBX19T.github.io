@@ -135,4 +135,25 @@ function series(n, f) { const out = []; const t0 = Math.floor(now / T) * T - n *
   assert.match(d.message, /COMPROU AAAA…AAAA \$2/); assert.match(d.message, /FALHOU sell/); assert.equal(d.priority, 4);
   console.log('ok   11 notificações: só com tópico válido; JSON em UTF-8; resumo só de ordens reais');
 }
+// ---- trava do piloto: sem aprovação não abre; com aprovação abre; stop móvel nas posições ----
+{
+  const up = series(120, i => (i < 119 ? 4000 + i * 0.5 + Math.sin(i) * 2 : 4100));
+  const mk = () => fakeHL([100], { positions: [], candles: { markets: { GOLD: { coin: 'xyz:GOLD', bars: up } } } });
+  let H = mk(), S = store(); const env = { HL_AUTOPILOT: '1' };
+  let r = await runAutopilot({ env, hl: H.hl, store: S, notify: notifier(), now });
+  assert.equal(r.approved, false); assert.match(H.syncs[0].o.blockOpen, /sem aprovação/);
+  H = mk(); S = store();
+  await S.put('approvals', { 'breakout|15m': { strategy: 'breakout', iv: '15m', at: now - 864e5, n: 35, avgR: .15, pf: 1.25, tR: 2.2 } });
+  r = await runAutopilot({ env, hl: H.hl, store: S, notify: notifier(), now });
+  assert.equal(r.approved, true); assert.equal(H.syncs[0].o.blockOpen, null);
+  console.log('ok   12 piloto: sem aprovação do teste não abre nada; com aprovação abre');
+  // stop móvel: estratégia trail, posição longa aberta há 50 velas -> slPx = máximo desde a entrada - 3×ATR
+  H = mk(); S = store(); H.positions = [{ coin: 'xyz:GOLD', szi: 0.01 }];
+  const t0 = up[up.length - 50][0];
+  await S.put('autopilot', { lastBar: {}, opened: { GOLD: t0 }, atr: { GOLD: 10 } });
+  r = await runAutopilot({ env: { HL_AUTOPILOT: '1', HL_STRATEGY: 'trail' }, hl: H.hl, store: S, notify: notifier(), now });
+  const hi = Math.max(...up.filter(b => b[0] >= t0).map(b => b[2]));
+  assert.ok(Math.abs(r.desired.GOLD.slPx - (hi - 30)) < 0.01, r.desired.GOLD.slPx + ' vs ' + (hi - 30));
+  console.log('ok   13 piloto com stop móvel envia o stop novo (máximo ' + hi.toFixed(1) + ' - 3×ATR)');
+}
 console.log('guard ok');

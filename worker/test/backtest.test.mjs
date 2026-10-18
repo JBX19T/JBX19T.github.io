@@ -130,7 +130,7 @@ console.log('backtest ok');
   const a = BT.simulate(data, liveCfg, { to: mid }), b = BT.simulate(data, liveCfg, { from: mid });
   assert.ok(a.trades.every(t => t.o < mid && t.c < mid), 'parte A só antes'); assert.ok(b.trades.every(t => t.o >= mid), 'parte B só depois');
   const R = BT.research(data, liveCfg);
-  assert.equal(R.rows.length, 6); assert.equal(R.split, data.GOLD[1800].t);
+  assert.equal(R.rows.length, 8); assert.equal(R.split, data.GOLD[1800].t);
   if (R.best) { const cands = R.rows.filter(r => r.A.n >= R.minA); assert.ok(cands.every(r => r.A.avgR <= R.best.A.avgR), 'escolhida só pela parte A'); }
   console.log('ok   13 duas partes:', R.rows.map(r => r.strategy + '/' + r.exec + ' A' + r.A.n + ' B' + r.B.n).join(' | '), '· aprovada:', R.pass);
 }
@@ -158,4 +158,30 @@ console.log('backtest ok');
   const R = BT.research({ GOLD: ou(3, 5000, 4400, .93, .004), SPX: ou(4, 5000, 7600, .93, .004), EURUSD: ou(5, 5000, 1.12, .93, .003) }, cfgD);
   assert.equal(R.pass, true); assert.equal(R.best.strategy, 'reversion');
   console.log('ok   15 acaso não passa (3 séries aleatórias); mercado que reverte à média passa com a reversão (t = ' + R.best.B.tR.toFixed(1) + ')');
+}
+// 16) stop móvel: numa subida longa deixa correr o ganho muito além de 3×ATR; o stop só sobe
+{
+  const s = DS.withStrategy({ ...DS.DEFAULTS, start: 10000, ddStop: .5, dayLoss: .5 }, 'trail');
+  const bars = []; let p = 100; const r = rng(5);
+  for (let i = 0; i < 400; i++) { const o = p; p *= 1 + (i < 150 ? (r() - .5) * .004 : .0015 + (r() - .5) * .002); bars.push({ t: T0 + i * 36e5, o, h: Math.max(o, p) * 1.0005, l: Math.min(o, p) * .9995, c: p }); }
+  const res = BT.simulate({ GOLD: bars }, s), tr = res.trades.filter(t => t.side > 0);
+  const best = Math.max(...tr.map(t => t.pnl / t.risk));
+  assert.ok(best > 3, 'uma trade de tendência deve render mais do que 3 R: ' + best.toFixed(2));
+  assert.ok(res.trades.every(t => t.why !== 'take-profit'), 'sem alvo fixo');
+  const st = DS.make(s), q = { side: 1, stop: 90, best: 100, atr: 2 };
+  assert.equal(st.trailStop(q, { h: 110, l: 108 }), 104); assert.equal(st.trailStop(q, { h: 105, l: 100 }), 104, 'nunca desce');
+  const qs = { side: -1, stop: 110, best: 100, atr: 2 }; assert.equal(st.trailStop(qs, { h: 95, l: 90 }), 96);
+  assert.equal(DS.make(DS.withStrategy(s, 'breakout')).trailStop({ ...q }, { h: 200, l: 199 }), q.stop, 'as outras estratégias não mexem no stop');
+  console.log('ok   16 stop móvel: melhor trade ' + best.toFixed(1) + ' R; o stop só aperta');
+}
+// 17) trava do dinheiro real
+{
+  const now = Date.now(), a = { strategy: 'trail', iv: '4h', at: now - 864e5, n: 40, avgR: .2, pf: 1.3, tR: 2.4 };
+  assert.equal(DS.approvalOk(a, 'trail', '4h', now), true);
+  assert.equal(DS.approvalOk(a, 'trail', '1h', now), false, 'outras velas não');
+  assert.equal(DS.approvalOk(a, 'breakout', '4h', now), false, 'outra estratégia não');
+  assert.equal(DS.approvalOk({ ...a, at: now - 46 * 864e5 }, 'trail', '4h', now), false, 'expira aos 45 dias');
+  for (const bad of [{ n: 29 }, { avgR: 0 }, { pf: 1.1 }, { tR: 1.9 }, { at: now + 36e5 }]) assert.equal(DS.approvalOk({ ...a, ...bad }, 'trail', '4h', now), false, JSON.stringify(bad));
+  assert.equal(DS.approvalOk(null, 'trail', '4h', now), false);
+  console.log('ok   17 trava: só a estratégia e as velas aprovadas, com os números exigidos, durante 45 dias');
 }

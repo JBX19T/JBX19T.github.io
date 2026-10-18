@@ -3,7 +3,9 @@
    para que todos usem exatamente as mesmas regras.
    Famílias:  breakout  = tendência EMA + rompimento do máximo/mínimo (a original)
               reversion = reversão à média: aposta no regresso à média depois de um afastamento de 2 desvios-padrão
-              trend     = tendência lenta: cruzamento de EMAs 20/100 com stops largos */
+              trend     = tendência lenta: cruzamento de EMAs 20/100 com stops largos
+              trail     = tendência com stop móvel: rompimento de 40 velas a favor da EMA 20/100, sem alvo fixo; o stop
+                          acompanha o preço a 3×ATR do melhor preço desde a entrada (deixa correr os ganhos, corta as perdas) */
 (function(root){
 /* parâmetros comuns (os mesmos do Macro Desk e do piloto automático do worker) */
 const DEFAULTS={riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:9,maxATRpct:.03};
@@ -11,11 +13,14 @@ const PRESETS={
   breakout:{label:'Rompimento (original)',short:'rompimento',p:{}},
   reversion:{label:'Reversão à média',short:'reversão',p:{bandN:20,band:2,stopATR:2,tpATR:2}},
   trend:{label:'Tendência lenta',short:'tendência',p:{fast:20,slow:100,stopATR:3,tpATR:6,maxHoldBars:192}},
+  trail:{label:'Tendência com stop móvel',short:'stop móvel',p:{fast:20,slow:100,brk:40,stopATR:3,tpATR:0,trailATR:3,maxHoldBars:400}},
 };
 /* devolve a configuração com os parâmetros próprios da estratégia escolhida */
 function withStrategy(cfg,name){
   const k=PRESETS[name]?name:'breakout';
-  return{...cfg,...PRESETS[k].p,strategy:k};
+  // os parâmetros próprios de cada estratégia voltam ao valor comum antes de aplicar os da escolhida (não herdam de outra)
+  const reset={fast:DEFAULTS.fast,slow:DEFAULTS.slow,brk:DEFAULTS.brk,stopATR:DEFAULTS.stopATR,tpATR:DEFAULTS.tpATR,maxHoldBars:DEFAULTS.maxHoldBars,trailATR:0};
+  return{...cfg,...reset,...PRESETS[k].p,strategy:k};
 }
 function make(CFG,nMarkets=3){
   const kind=PRESETS[CFG.strategy]?CFG.strategy:'breakout';
@@ -57,11 +62,25 @@ function make(CFG,nMarkets=3){
     if(f<s&&fp>=sp)return{dir:'short',why:`EMA ${CFG.fast} cruza abaixo da ${CFG.slow}`,atr:a};
     return{dir:'flat',why:f>s?'alta, sem cruzamento novo':'baixa, sem cruzamento novo',atr:a};
   };
-  const signal={breakout,reversion,trend}[kind];
+  const signal={breakout,reversion,trend,trail:breakout}[kind];
+  /* stop móvel: devolve o novo stop depois de uma vela (só aperta, nunca alarga). p = {side, stop, best, atr} */
+  const trailStop=(p,bar)=>{
+    if(!(CFG.trailATR>0)||!(p.atr>0))return p.stop;
+    const best=p.side>0?Math.max(p.best??bar.h,bar.h):Math.min(p.best??bar.l,bar.l);p.best=best;
+    const s=best-p.side*CFG.trailATR*p.atr;
+    return p.side>0?Math.max(p.stop,s):Math.min(p.stop,s);
+  };
   const cost=()=>CFG.costBps/1e4;
   const sizeFor=(eq,entry,stopDist)=>{const riskUsd=eq*CFG.riskPct,n=riskUsd/(stopDist/entry);return Math.min(n,eq*CFG.maxLev/nMarkets)};
-  return{ema,atr,signal,cost,sizeFor,kind};
+  const hasTarget=CFG.tpATR>0;
+  return{ema,atr,signal,cost,sizeFor,kind,trailStop,hasTarget};
 }
-const api={make,PRESETS,withStrategy,DEFAULTS};
+/* trava do dinheiro real: só se opera a sério uma estratégia (e tamanho de velas) que passou o teste em duas partes
+   há menos de 45 dias. Mesmas exigências do teste: 30+ trades na 2.ª parte, ganho médio > 0, fator de lucro > 1,1, t >= 2. */
+const APPROVAL_DAYS=45;
+function approvalOk(a,strategy,iv,now=Date.now()){
+  return !!(a&&a.strategy===strategy&&a.iv===iv&&a.at>0&&now-a.at<=APPROVAL_DAYS*864e5&&now>=a.at-6e5&&a.n>=30&&a.avgR>0&&a.pf>1.1&&a.tR>=2);
+}
+const api={make,PRESETS,withStrategy,DEFAULTS,approvalOk,APPROVAL_DAYS};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSTRAT=api;
 })(typeof window!=='undefined'?window:globalThis);

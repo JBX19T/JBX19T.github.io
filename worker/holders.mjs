@@ -12,6 +12,7 @@ import { makeStore } from './store.mjs';
 import { makeNotify, describe } from './notify.mjs';
 import { runGuard, guardCfg, totalEquity } from './guard.mjs';
 import { runAutopilot, autopilotCfg } from './autopilot.mjs';
+import DS from '../grokbot/strategy.js';
 export { Guard } from './store.mjs';
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SYSTEM = '11111111111111111111111111111111';
@@ -137,7 +138,8 @@ export default {
           if (route === 'GET /hl/state') {
             const st = await hl.state(), gi = await guardInfo();
             const ap = A.on && store ? await store.get('autopilot') : null;
-            return json({ ...st, guard: { ...gi, ...(await hlGuard()), dd: G.hlDD }, autopilot: { on: A.on, strategy: A.strategy, label: A.label, interval: A.iv, last: ap && ap.last } }, 200, ns);
+            const appr = store ? (await store.get('approvals')) || {} : {};
+            return json({ ...st, guard: { ...gi, ...(await hlGuard()), dd: G.hlDD }, autopilot: { on: A.on, strategy: A.strategy, label: A.label, interval: A.iv, approved: DS.approvalOk(appr[A.strategy + '|' + A.iv], A.strategy, A.iv), last: ap && ap.last } }, 200, ns);
           }
           if (route === 'POST /hl/sync') {
             if (A.on) return json({ network: hl.network, mode: hl.live ? 'real' : 'simulacao', autopilot: true, plan: [], results: [], skipped: [{ market: 'todos', reason: 'piloto automático no servidor ligado: é o worker que decide' }] }, 200, ns);
@@ -146,6 +148,13 @@ export default {
           }
           if (route === 'POST /hl/candles') return json(await makeHL({ ...env, HL_NETWORK: 'mainnet', HL_LIVE: '0' }).candles(body.interval, body.days), 200, ns);   // só leitura, sempre na rede real
           if (route === 'POST /hl/flatten') return json(tell('Hyperliquid', await hl.flatten()), 200, ns);
+          if (route === 'POST /hl/approve') {   // a app diz que uma estratégia passou o teste histórico (o worker volta a verificar os números)
+            if (!store) return json({ error: 'sem memória no worker' }, 503);
+            const a = { strategy: String(body.strategy || ''), iv: String(body.iv || ''), at: Date.now(), n: +body.n, avgR: +body.avgR, pf: +body.pf, tR: +body.tR };
+            if (!DS.approvalOk(a, a.strategy, a.iv)) return json({ error: 'os números não cumprem as exigências do teste' }, 400);
+            const all = (await store.get('approvals')) || {}; all[a.strategy + '|' + a.iv] = a; await store.put('approvals', all);
+            return json({ ok: true, approval: a }, 200, ns);
+          }
           if (route === 'POST /hl/resume') {
             if (!store) return json({ error: 'sem memória no worker' }, 503);
             const eq = totalEquity(await hl.state());

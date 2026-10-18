@@ -10,7 +10,7 @@ function sim({equity=100, mid=4000, failStop=false, positions=[], orders=[], fil
       if(body.type==='meta')return R({universe:body.dex==='xyz'?[{name:'xyz:GOLD',szDecimals:4,maxLeverage:10},{name:'xyz:SP500',szDecimals:3,maxLeverage:10},{name:'xyz:JPY',szDecimals:2,maxLeverage:20}]:[{name:'BTC',szDecimals:5,maxLeverage:40}]});
       if(body.type==='allMids')return R(body.dex==='xyz'?{'xyz:GOLD':String(S.mid),'xyz:SP500':'5200.5','xyz:JPY':'150'}:{BTC:'60000'});
       if(body.type==='clearinghouseState')return R({marginSummary:{accountValue:String(S.equity)},assetPositions:S.positions.map(p=>({position:{coin:p.coin,szi:String(p.szi),entryPx:'4000',unrealizedPnl:'0'}}))});
-      if(body.type==='openOrders')return R(S.orders);
+      if((body.type==='openOrders'||body.type==='frontendOpenOrders'))return R(S.orders);
     }
     if(url.endsWith('/exchange')){const a=body.action;
       assert.ok(body.signature.r.startsWith('0x')&&[27,28].includes(body.signature.v));assert.equal(body.vaultAddress,null);
@@ -18,7 +18,7 @@ function sim({equity=100, mid=4000, failStop=false, positions=[], orders=[], fil
       if(a.type==='cancel'){S.orders=S.orders.filter(x=>!a.cancels.some(c=>c.o===x.oid));return R({status:'ok',response:{type:'cancel',data:{statuses:a.cancels.map(()=>'success')}}})}
       if(a.type==='order'){
         const st=a.orders.map(o=>{
-          if(o.t.trigger||(o.r&&o.t.limit&&o.t.limit.tif==='Gtc')){if(failStop)return{error:'Trigger rejeitado'};S.orders.push({coin:'xyz:GOLD',oid:900+S.orders.length,reduceOnly:true});return{resting:{oid:900}}}
+          if(o.t.trigger||(o.r&&o.t.limit&&o.t.limit.tif==='Gtc')){if(failStop)return{error:'Trigger rejeitado'};S.orders.push({coin:'xyz:GOLD',oid:900+S.orders.length,reduceOnly:true,isTrigger:!!o.t.trigger,orderType:o.t.trigger?'Stop Market':'Limit',triggerPx:o.t.trigger?o.t.trigger.triggerPx:'0'});return{resting:{oid:900}}}
           if(!fillOrders)return{error:'sem liquidez'};
           if(o.r){S.positions=S.positions.filter(p=>p.coin!=='xyz:GOLD');return{filled:{totalSz:o.s,avgPx:o.p,oid:1}}}
           S.positions.push({coin:'xyz:GOLD',szi:(o.b?1:-1)*parseFloat(o.s)});return{filled:{totalSz:o.s,avgPx:o.p,oid:1}}});
@@ -104,3 +104,24 @@ console.log('TUDO OK');
     const R = j => ({ ok: true, status: 200, text: async () => JSON.stringify(j), json: async () => j });
     if (b.type === 'perpDexs') return R([null]); if (b.type === 'meta') return R({ universe: [] }); if (b.type === 'allMids') return R({}); throw new Error('x'); };
   const d = await makeHL(env(), f).discover(); assert.ok(d.dexes.includes('main')); assert.equal(n, 3); console.log('ok   18 429 repetido ' + (n - 1) + 'x e depois funciona'); }
+// 19-23 stop móvel, stop em falta e entradas sem alvo
+{const SL={coin:'xyz:GOLD',oid:77,isTrigger:true,orderType:'Stop Market',triggerPx:'3900',reduceOnly:true};
+ const {S,f}=sim({positions:[{coin:'xyz:GOLD',szi:0.002}],orders:[SL]});const hl=makeHL(env({HL_LIVE:'1'}),f);
+ const r=await hl.sync({GOLD:{side:'long',frac:0,slPx:3950}});
+ const e=ex(S);assert.equal(e[0].body.action.type,'order');assert.equal(e[0].body.action.orders[0].t.trigger.triggerPx,'3950');assert.equal(e[0].body.action.orders[0].r,true);
+ assert.equal(e[1].body.action.type,'cancel');assert.equal(e[1].body.action.cancels[0].o,77);assert.equal(r.results[0].op,'trail');assert.equal(r.results[0].ok,true);
+ ok('19 stop móvel: põe o stop novo (3950) e só depois cancela o antigo (3900)')}
+{const SL={coin:'xyz:GOLD',oid:77,isTrigger:true,orderType:'Stop Market',triggerPx:'3900',reduceOnly:true};
+ const {S,f}=sim({positions:[{coin:'xyz:GOLD',szi:0.002}],orders:[SL]});const hl=makeHL(env({HL_LIVE:'1'}),f);
+ await hl.sync({GOLD:{side:'long',frac:0,slPx:3880}});await hl.sync({GOLD:{side:'long',frac:0,slPx:3999}});
+ assert.equal(ex(S).length,0);ok('20 stop nunca alarga, e não sobe para cima do preço')}
+{const {S,f}=sim({positions:[{coin:'xyz:GOLD',szi:0.002}],orders:[]});const hl=makeHL(env({HL_LIVE:'1'}),f);
+ const r=await hl.sync({GOLD:{side:'long',frac:0,slPct:0.01}});
+ assert.equal(r.results[0].op,'stop');assert.equal(ex(S)[0].body.action.orders[0].t.trigger.triggerPx,'3960');ok('21 posição sem stop: repõe-no (entrada -1%)')}
+{const {S,f}=sim({mid:3900,positions:[{coin:'xyz:GOLD',szi:0.002}],orders:[]});const hl=makeHL(env({HL_LIVE:'1'}),f);
+ const r=await hl.sync({GOLD:{side:'long',frac:0,slPct:0.01}});
+ assert.equal(r.results[0].op,'close');assert.equal(ex(S)[0].body.action.orders[0].r,true);ok('22 posição sem stop e preço já abaixo do stop: fecha')}
+{const {S,f}=sim();const hl=makeHL(env({HL_LIVE:'1'}),f);const r=await hl.sync({GOLD:{side:'long',frac:0.667,slPct:0.01,tpPct:null}});
+ const prot=ex(S)[2].body.action.orders;assert.equal(prot.length,1);assert.equal(prot[0].t.trigger.tpsl,'sl');assert.equal(r.results.at(-1).ok,true);assert.equal(r.plan[0].tp,null);
+ ok('23 estratégia de stop móvel: entra só com stop, sem alvo')}
+console.log('stop móvel ok');

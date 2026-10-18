@@ -35,16 +35,40 @@ function remember(k,res){   // resume o que o worker fez e guarda nas últimas l
   P[k].log.length=Math.min(P[k].log.length,6);
 }
 
+/* ===== travas do dinheiro real =====
+   Hyperliquid: só envia ordens se a estratégia em uso (e as velas) passou o teste histórico em duas partes há menos de 45 dias.
+   Memecoins: só compra se o desk de memecoins em papel já provou lucro (30+ trades fechadas, fator de lucro > 1,1). Vender continua sempre. */
+function hlGate(){
+  try{
+    const c=(window.MACRO&&MACRO.CHOICE)||{strategy:'breakout',iv:'15m'};
+    const all=JSON.parse(localStorage.getItem('dollosApprovalV1')||'{}')||{},a=all[c.strategy+'|'+c.iv];
+    const label=`${DSTRAT.PRESETS[c.strategy].label} · ${c.iv}`;
+    if(DSTRAT.approvalOk(a,c.strategy,c.iv))return{ok:true,label,until:a.at+DSTRAT.APPROVAL_DAYS*864e5};
+    return{ok:false,label,why:a&&a.at?'a aprovação expirou (refaz o teste)':'não passou no teste histórico'};
+  }catch(e){return{ok:false,label:'?',why:'sem dados'}}
+}
+function memeGate(){
+  try{const M=window.MEME;if(!M)return{ok:false,why:'desk de memecoins indisponível'};
+    const st=RESULTS.compute(M.state().trades||[],M.start(),0,0);
+    const ok=st.n>=30&&st.net>0&&st.pf!=null&&st.pf>1.1;
+    return{ok,n:st.n,pf:st.pf,why:ok?'':`o desk em papel tem ${st.n} trades fechadas e fator de lucro ${st.pf==null?'—':st.pf===Infinity?'∞':st.pf.toFixed(2)} (precisa de 30+ e acima de 1,1)`};
+  }catch(e){return{ok:false,why:'sem dados'}}
+}
+
 /* ===== o que cada desk quer ter ===== */
 function hlDesired(){
   const K=window.MACRO;if(!K)return {};
   const S=K.state(),eq=K.equity(),d={};
   for(const m of K.MK){const p=S.pos[m.key];if(!p||!(eq>0))continue;
-    d[m.key]={side:p.side>0?'long':'short',frac:+(p.notional/eq).toFixed(4),slPct:+(Math.abs(p.entry-p.stop)/p.entry).toFixed(5),tpPct:+(Math.abs(p.tp-p.entry)/p.entry).toFixed(5)}}
+    d[m.key]={side:p.side>0?'long':'short',frac:+(p.notional/eq).toFixed(4),slPct:+(Math.abs(p.entry-p.stop)/p.entry).toFixed(5),tpPct:p.tp==null?null:+(Math.abs(p.tp-p.entry)/p.entry).toFixed(5)};
+    if(p.atr)d[m.key].slPx=+p.stop.toPrecision(6)}   // estratégia de stop móvel: a corretora acompanha o stop do desk
   return d;
 }
 function solDesired(){
-  try{return S.positions.filter(p=>p.t&&p.t.chain==='solana'&&p.t.addr&&!String(p.t.addr).startsWith('demo')).map(p=>p.t.addr)}catch(e){return[]}
+  let want=[];
+  try{want=S.positions.filter(p=>p.t&&p.t.chain==='solana'&&p.t.addr&&!String(p.t.addr).startsWith('demo')).map(p=>p.t.addr)}catch(e){return[]}
+  if(!memeGate().ok){const held=new Set(((P.sol.st&&P.sol.st.tokens)||[]).map(t=>t.mint));want=want.filter(m=>held.has(m))}   // travado: não compra nada novo, só mantém/vende
+  return want;
 }
 
 /* ===== sincronização ===== */
@@ -52,11 +76,13 @@ async function sync(k){
   const on=L[k];if(!on||P[k].busy||DEMO||!api()||!L.token)return;
   P[k].busy=true;
   try{
-    const want=k==='hl'?hlDesired():solDesired();P[k].sig=JSON.stringify(want);
     P[k].err='';
     try{P[k].st=await call('GET',`/${k}/state`)}catch(e){P[k].err=e.message}   // o estado (mercados, saldo) mostra-se mesmo que a sincronização falhe
+    if(k==='sol'&&!P.sol.st){P[k].sig=JSON.stringify(solDesired());P[k].at=Date.now();P[k].busy=false;render(k);return}   // sem saber o que a carteira tem, não decide nada (a trava depende disso)
+    const want=k==='hl'?hlDesired():solDesired();P[k].sig=JSON.stringify(want);
     const auto=k==='hl'&&P.hl.st&&P.hl.st.autopilot&&P.hl.st.autopilot.on;   // piloto automático no servidor: a app só observa
-    if(!auto)try{P[k].last=await call('POST',`/${k}/sync`,{desired:want});remember(k,P[k].last);P[k].st=await call('GET',`/${k}/state`).catch(()=>P[k].st)}catch(e){P[k].err=e.message}
+    const locked=k==='hl'&&!hlGate().ok;   // estratégia sem aprovação: a app não envia nada à Hyperliquid
+    if(!auto&&!locked)try{P[k].last=await call('POST',`/${k}/sync`,{desired:want});remember(k,P[k].last);P[k].st=await call('GET',`/${k}/state`).catch(()=>P[k].st)}catch(e){P[k].err=e.message}
     P[k].at=Date.now();
   }catch(e){P[k].err=e.message}
   P[k].busy=false;render(k);
@@ -87,6 +113,14 @@ function guardHtml(k,st){
     return halt+`<div class="note">Proteção do servidor (corre a cada 5 min, mesmo com a app fechada): ${run?'<span class="up">ativa</span>':'<span class="dn">sem verificações recentes</span>'} · última ${last}${g.peak>0?` · máximo $${(+g.peak).toFixed(2)} · fecha tudo a -${Math.round(g.dd*100)}%`:''}</div>`;
   }
   return`<div class="note">Proteção do servidor (a cada 5 min, mesmo com a app fechada): ${run?'<span class="up">ativa</span>':'<span class="dn">sem verificações recentes</span>'} · última ${last}. Vende uma memecoin a -${Math.round(g.sl*100)}% ou +${Math.round(g.tp*100)}% da entrada ou ao fim de ${g.maxHours} h${g.staleMin>0?`; se a app ficar ${g.staleMin} min sem sincronizar, vende tudo`:''}.${g.blocked?` ${g.blocked} bloqueada(s) para recompra.`:''}</div>`;
+}
+function gateHtml(k){
+  if(k==='hl'){const g=hlGate();
+    return g.ok?`<div class="note">🔓 Estratégia em uso aprovada pelo teste histórico (${esc(g.label)}) até ${new Date(g.until).toISOString().slice(0,10)}.</div>`
+      :`<div class="halt">🔒 <b>Dinheiro real bloqueado</b>: a estratégia em uso (${esc(g.label)}) ${esc(g.why)}. A app não envia nenhuma ordem à Hyperliquid enquanto nenhuma estratégia passar. As posições que já existam mantêm os stops na corretora.</div>`}
+  const g=memeGate();
+  return g.ok?`<div class="note">🔓 O desk de memecoins em papel provou lucro (${g.n} trades, fator de lucro ${g.pf===Infinity?'∞':g.pf.toFixed(2)}): compras reais permitidas.</div>`
+    :`<div class="halt">🔒 <b>Compras reais bloqueadas</b>: ${esc(g.why)}. Continua a vender o que houver na carteira.</div>`;
 }
 function autoHtml(st){
   const a=st.autopilot;if(!a||!a.on)return'';
@@ -128,6 +162,7 @@ function onHtml(k){
   }
   return `<div class="alh"><b>${hl?'HYPERLIQUID · LIVE':'SOLANA · LIVE (MEMECOINS)'}</b><small>${modeTag(st)}</small><button class="ghost" data-k="${k}" data-a="off">DESLIGAR</button></div>
     ${e.err?`<div class="halt">⚠ ${esc(e.err)}</div>`:''}${body}
+    ${gateHtml(k)}
     ${st?guardHtml(k,st)+(hl?autoHtml(st):''):''}
     ${e.log.length?`<div class="note">${e.log.join('<br>')}</div>`:''}
     <div class="pmbar"><button class="ghost" data-k="${k}" data-a="flat">FECHAR TUDO</button><button class="ghost" data-k="${k}" data-a="push">TESTAR NOTIFICAÇÃO</button></div>
@@ -156,6 +191,6 @@ function bind(){
   setInterval(tick,5000);setTimeout(tick,2000);
 }
 const setToken=t=>{L.token=t;save();for(const k of ['hl','sol'])render(k)};
-window.LIVE={hlDesired,solDesired,L,P,sync,flatten,setToken,resume};
+window.LIVE={hlDesired,solDesired,L,P,sync,flatten,setToken,resume,hlGate,memeGate};
 if($l('hlBody'))bind();
 })();

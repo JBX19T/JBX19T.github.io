@@ -72,6 +72,14 @@ async function fetchFunding(coins,from,to){
   }
   return{funding:out,cover};
 }
+/* aprovação para dinheiro real: guardada no telemóvel e enviada ao worker (para o piloto automático) */
+const APPROVAL_KEY='dollosApprovalV1';
+function approvals(){try{return JSON.parse(localStorage.getItem(APPROVAL_KEY)||'{}')||{}}catch(e){return{}}}
+function approve(best,iv){
+  const B=best.B,a={strategy:best.strategy,iv,at:Date.now(),n:B.n,avgR:B.avgR,pf:B.pf,tR:B.tR,exec:best.exec};
+  const all=approvals();all[best.strategy+'|'+iv]=a;try{localStorage.setItem(APPROVAL_KEY,JSON.stringify(all))}catch(e){}
+  if(token()&&api()){const f=window.CapacitorWebFetch||fetch;f(api()+'/hl/approve',{method:'POST',headers:{'x-token':token(),'content-type':'application/json'},body:JSON.stringify(a)}).catch(()=>{})}
+}
 function toBars(j){
   const out={},coins={};
   for(const [k,m] of Object.entries(j.markets||{})){if(!m||!m.bars||!m.bars.length)continue;coins[k]=m.coin;out[k]=m.bars.map(a=>({t:a[0],o:a[1],h:a[2],l:a[3],c:a[4]})).sort((x,y)=>x.t-y.t)}
@@ -89,6 +97,7 @@ async function run(){
     state.msg='a simular 3 estratégias × 2 tipos de ordem…';render();await new Promise(r=>setTimeout(r,30));
     const all=BT.runAll(bars,MACRO.CFG,{funding:fund.funding,base:MACRO.BASE});
     state.res={all,coins,iv:state.iv,cover:fund.cover,missing:['GOLD','SPX','EURUSD'].filter(k=>!bars[k])};state.err='';
+    const X=all.research;if(X.pass)approve(X.best,state.iv);
   }catch(e){state.err=e.message}
   state.busy=false;state.msg='';render();
 }
@@ -126,7 +135,7 @@ function researchHtml(R){
   const rows=X.rows.map(r=>`<tr${r===best?' style="font-weight:700"':''}><td>${r===best?'★ ':''}${esc(P_(r.strategy).short)}<br><small>${r.exec==='maker'?'limitadas':'a mercado'}</small></td><td>${r.A.n}</td><td class="${(r.A.avgR||0)>0?'up':'dn'}">${r2(r.A.avgR)}</td><td>${pf2(r.A.pf)}</td><td>${r.B.n}</td><td class="${(r.B.avgR||0)>0?'up':'dn'}">${r2(r.B.avgR)}</td><td>${pf2(r.B.pf)}</td></tr>`).join('');
   let v='';
   if(!best)v=`Nenhuma combinação teve ${X.minA}+ trades na 1.ª parte: não há base para escolher.`;
-  else if(X.pass)v=`★ <b>${esc(best.label)}</b> foi a melhor na 1.ª parte e <b>continuou a ganhar na 2.ª</b>, que a escolha não viu: ${r2(best.B.avgR)} R por trade, fator de lucro ${pf2(best.B.pf)} em ${best.B.n} trades (t = ${best.B.tR==null?"—":best.B.tR.toFixed(1)}). É candidata a <b>paper trading</b>, ainda não a dinheiro real: falta confirmar ao vivo durante algumas semanas.${best.exec==='maker'?' Atenção: o resultado conta com ordens limitadas; o desk em papel entra a mercado, por isso ao vivo deverá ser um pouco pior.':''}`;
+  else if(X.pass)v=`★ <b>${esc(best.label)}</b> foi a melhor na 1.ª parte e <b>continuou a ganhar na 2.ª</b>, que a escolha não viu: ${r2(best.B.avgR)} R por trade, fator de lucro ${pf2(best.B.pf)} em ${best.B.n} trades (t = ${best.B.tR==null?"—":best.B.tR.toFixed(1)}). Fica <b>aprovada durante ${DSTRAT.APPROVAL_DAYS} dias</b> para estas velas: só depois de a pores no desk e de semanas em papel faz sentido ligar dinheiro real.${best.exec==='maker'?' Atenção: o resultado conta com ordens limitadas; o desk em papel entra a mercado, por isso ao vivo deverá ser um pouco pior.':''}`;
   else{
     const why=[];const B=best.B;
     if(!(best.A.avgR>0))why.push('nem na 1.ª parte ganhou');
@@ -165,7 +174,7 @@ function resHtml(){
     ${row('Resultado (conta de $10 000)',`<span class="${s.net>=0?'up':'dn'}">${usd(s.net)} (${pct(s.netPct)})</span>`)}
     ${row('Fator de lucro',s.pf==null?'—':s.pf===Infinity?'∞':s.pf.toFixed(2))}
     ${row('Média por trade em R',s.avgR==null?'—':`${s.avgR.toFixed(2)} R <small>(antes de custos ${s.avgGrossR.toFixed(2)} R · custos ${s.costR.toFixed(2)} R)</small>`)}
-    ${row('Acerto para empatar',`~${Math.round(s.breakEvenWin*100)}% (antes de custos)`)}
+    ${row('Acerto para empatar',s.breakEvenWin==null?'— (sem alvo fixo: depende do tamanho dos ganhos)':`~${Math.round(s.breakEvenWin*100)}% (antes de custos)`)}
     ${row('Ganho / perda média',s.n?`${s.avgWin==null?'—':usd(s.avgWin)} / ${s.avgLoss==null?'—':usd(s.avgLoss)}`:'—')}
     ${row('Taxas / funding pagos',`${usd(-s.feesUsd)} / ${Object.keys(R.cover||{}).length?usd(-s.fundUsd):'não incluído'}`)}
     ${row('Pior queda',(s.maxDD*100).toFixed(1)+'%')}
@@ -180,7 +189,7 @@ function resHtml(){
     <table><thead><tr><th></th><th>trades</th><th>result.</th><th>f. lucro</th><th>queda</th></tr></thead><tbody>${vars}</tbody></table>
     <div class="sub">VEREDICTO (ESTRATÉGIA EM USO)</div><div class="note">${verdict(s).join('<br>')}</div>
     ${researchHtml(R)}
-    ${cov?`<div class="note">Funding real em ${cov} das horas; nas restantes usa a média das horas conhecidas.</div>`:''}
+    ${cov?`<div class="note">Funding real em ${cov} das horas; nas restantes usa a média das horas conhecidas.${(()=>{const miss=Object.keys(R.coins).filter(k=>!(k in (R.cover||{})));return miss.length?` A Hyperliquid não devolveu o histórico de funding de ${miss.map(k=>names[k]||k).join(', ')}: aí o funding conta como zero.`:''})()}</div>`:''}
     <div class="pmbar"><button class="ghost" id="btCsv">EXPORTAR TRADES DO TESTE (CSV)</button></div>
     ${state.csv?`<textarea readonly style="width:100%;height:90px;font-size:10px">${esc(state.csv)}</textarea>`:''}
     ${R.missing.length?`<div class="note">Sem dados para: ${R.missing.map(k=>names[k]).join(', ')}.</div>`:''}
@@ -210,6 +219,6 @@ function bind(){
   el.addEventListener('change',e=>{if(e.target.id==='btIv'){state.iv=e.target.value;render()}});
   render();
 }
-window.BTUI={run,state:()=>state};
+window.BTUI={run,state:()=>state,approvals};
 if($b('btBody'))bind();
 })();
