@@ -7,7 +7,6 @@ const DEMO=new URLSearchParams(location.search).has('demo');
 const KEY='dollosLiveV1';
 const L={token:'',hl:false,sol:false};
 try{const j=JSON.parse(localStorage.getItem(KEY)||'null');if(j)Object.assign(L,{token:j.token||'',hl:!!j.hl,sol:!!j.sol})}catch(e){}
-if(!L.token){try{const a=JSON.parse(localStorage.getItem('dollosAlpacaV1')||'null');if(a&&a.token)L.token=a.token}catch(e){}}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(L))}catch(e){}};
 const api=()=>typeof HOLDERS_API==='string'?HOLDERS_API:'';
 const $l=id=>document.getElementById(id);
