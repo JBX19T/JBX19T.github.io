@@ -1,7 +1,12 @@
 // Cloudflare Worker: proxy de holders (Helius) para o DOLLOS Trade Bot. A chave fica em env.HELIUS_API_KEY (segredo).
 // GET /wallet?address=<carteira>  ->  { address, swaps:[{signature,timestamp,side,mint}] }  (trades que o bot pode copiar)
 // GET /holders?mint=<mint solana>  ->  { topWallet, top10, mintAuthority, freezeAuthority, supply, excluded }
+// /hl/*   ->  Hyperliquid (hl.mjs): GET /hl/state, POST /hl/sync {desired}, POST /hl/flatten   (ouro, S&P 500, EUR/USD)
+// /sol/*  ->  Solana/Jupiter (sol.mjs): GET /sol/state, POST /sol/sync {desired:[mints]}, POST /sol/flatten   (memecoins)
+//             ambos: simulação por omissão; só enviam ordens com HL_LIVE=1 / SOL_LIVE=1; exigem o cabeçalho X-Token = APP_TOKEN
 // /alpaca/*  ->  espelho das posições do Macro Desk numa conta de PAPER da Alpaca (segredos: ALPACA_KEY, ALPACA_SECRET, APP_TOKEN)
+import { makeHL } from './hl.mjs';
+import { makeSol } from './sol.mjs';
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SYSTEM = '11111111111111111111111111111111';
 // Donos conhecidos de pools/curvas (não são carteiras de investidores): Raydium AMM v4 e CPMM, pump.fun curve/AMM
@@ -151,6 +156,28 @@ export default {
     };
     const json = (b, s = 200, extra = {}) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json', ...cors, ...extra } });
     if (req.method === 'OPTIONS') return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'X-Token, Content-Type' } });
+    if (url.pathname.startsWith('/hl/') || url.pathname.startsWith('/sol/')) {
+      if (allowed.length && !allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403);
+      if (!env.APP_TOKEN) return json({ error: 'APP_TOKEN em falta no worker' }, 503);
+      if (!safeEq(req.headers.get('x-token') || '', env.APP_TOKEN)) return json({ error: 'token inválido' }, 401);
+      let body = {};
+      if (req.method === 'POST') { try { body = await req.json(); } catch (e) { return json({ error: 'json inválido' }, 400); } }
+      try {
+        const route = req.method + ' ' + url.pathname;
+        if (url.pathname.startsWith('/hl/')) {
+          const hl = makeHL(env);
+          if (route === 'GET /hl/state') return json(await hl.state(), 200, { 'cache-control': 'no-store' });
+          if (route === 'POST /hl/sync') return json(await hl.sync(body.desired || {}), 200, { 'cache-control': 'no-store' });
+          if (route === 'POST /hl/flatten') return json(await hl.flatten(), 200, { 'cache-control': 'no-store' });
+        } else {
+          const sol = makeSol(env);
+          if (route === 'GET /sol/state') return json(await sol.state(), 200, { 'cache-control': 'no-store' });
+          if (route === 'POST /sol/sync') return json(await sol.sync(Array.isArray(body.desired) ? body.desired : []), 200, { 'cache-control': 'no-store' });
+          if (route === 'POST /sol/flatten') return json(await sol.flatten(), 200, { 'cache-control': 'no-store' });
+        }
+        return json({ error: 'not found' }, 404);
+      } catch (e) { return json({ error: String(e.message || e) }, 502); }
+    }
     if (url.pathname.startsWith('/alpaca/')) {
       if (allowed.length && !allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403);
       let body = null;

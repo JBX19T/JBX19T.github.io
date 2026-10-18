@@ -1,0 +1,36 @@
+import {alpaca} from '../holders.mjs';
+const env={APP_TOKEN:'tok',ALPACA_KEY:'k',ALPACA_SECRET:'s'};
+let open=true,positions=[],orders=[],calls=[];
+const f=async(u,o={})=>{calls.push((o.method||'GET')+' '+u+' '+(o.headers['APCA-API-KEY-ID']||''));
+ const R=(j,s=200)=>({ok:s<400,status:s,text:async()=>JSON.stringify(j)});
+ if(u.endsWith('/clock'))return R({is_open:open,next_open:'2026-10-19T13:30:00Z',next_close:'x'});
+ if(u.endsWith('/account'))return R({equity:'100000',cash:'100000',status:'ACTIVE'});
+ if(u.endsWith('/positions')&&!o.method)return R(positions);
+ if(u.includes('/orders?status=open'))return R(orders);
+ if(u.includes('/trades/latest'))return R({trade:{p:u.includes('SPY')?520:200}});
+ if(u.endsWith('/orders')&&o.method==='POST'){const b=JSON.parse(o.body);positions.push({symbol:b.symbol,qty:b.qty,side:b.side==='buy'?'long':'short',avg_entry_price:'1',market_value:'1',unrealized_pl:'0'});return R({id:'o1',status:'accepted'})}
+ if(o.method==='DELETE'){const sym=u.split('/').pop();const i=positions.findIndex(p=>p.symbol===sym);if(i<0)return R({message:'position does not exist'},404);positions.splice(i,1);return R({id:'c1',status:'accepted'})}
+ return R({message:'?'},404)};
+const t=async(n,args,exp)=>{const r=await alpaca(...args,env,f);const ok=exp(r);console.log(ok?'ok  ':'FAIL',n,JSON.stringify(r));if(!ok)process.exitCode=1};
+await t('sem token',['GET','/alpaca/state',null,'x'],r=>r[0]===401);
+await t('sem segredos',['GET','/alpaca/state',null,'tok'],r=>true);
+console.log('no secrets:',JSON.stringify(await alpaca('GET','/alpaca/state',null,'tok',{},f)));
+await t('state',['GET','/alpaca/state',null,'tok'],r=>r[0]===200&&r[1].paper&&r[1].equity===100000&&r[1].open);
+await t('símbolo fora da lista',['POST','/alpaca/order',{symbol:'TSLA',side:'buy',notional:100},'tok'],r=>r[0]===400);
+await t('side inválido',['POST','/alpaca/order',{symbol:'SPY',side:'x',notional:100},'tok'],r=>r[0]===400);
+await t('valor inválido',['POST','/alpaca/order',{symbol:'SPY',side:'buy',notional:-5},'tok'],r=>r[0]===400);
+await t('order buy SPY 6666 (cap 5000 -> 9 ações)',['POST','/alpaca/order',{symbol:'SPY',side:'buy',notional:6666},'tok'],r=>r[1].qty===9&&r[1].price===520);
+await t('segunda ordem igual é ignorada',['POST','/alpaca/order',{symbol:'SPY',side:'buy',notional:6666},'tok'],r=>r[1].skipped==='já existe posição');
+await t('short GLD 1000 -> 5 ações',['POST','/alpaca/order',{symbol:'GLD',side:'sell',notional:1000},'tok'],r=>r[1].qty===5);
+await t('abaixo de 1 ação',['POST','/alpaca/order',{symbol:'FXE',side:'buy',notional:50},'tok'],r=>r[1].skipped==='valor abaixo de 1 ação');
+await t('state mostra 2 posições',['GET','/alpaca/state',null,'tok'],r=>r[1].positions.length===2);
+open=false;
+await t('mercado fechado: ordem',['POST','/alpaca/order',{symbol:'FXE',side:'buy',notional:1000},'tok'],r=>r[1].skipped==='mercado fechado');
+await t('mercado fechado: close',['POST','/alpaca/close',{symbol:'SPY'},'tok'],r=>r[1].skipped==='mercado fechado');
+open=true;
+await t('close SPY',['POST','/alpaca/close',{symbol:'SPY'},'tok'],r=>r[1].id==='c1');
+await t('close sem posição',['POST','/alpaca/close',{symbol:'SPY'},'tok'],r=>r[1].skipped==='sem posição');
+await t('close símbolo inválido',['POST','/alpaca/close',{symbol:'AAPL'},'tok'],r=>r[0]===400);
+await t('rota desconhecida',['GET','/alpaca/x',null,'tok'],r=>r[0]===404);
+console.log('hosts usados:',[...new Set(calls.map(c=>new URL(c.split(' ')[1]).host))]);
+console.log('chamadas ao host live:',calls.filter(c=>c.includes('//api.alpaca.markets')).length);
