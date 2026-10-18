@@ -87,10 +87,14 @@ export function makeHL(env, f = fetch) {
     if (!env.HL_AGENT_KEY || !/^0x[0-9a-fA-F]{64}$/.test(env.HL_AGENT_KEY)) throw new Error('HL_AGENT_KEY em falta ou inválida');
     if (!ADDR.test(env.HL_ACCOUNT || '')) throw new Error('HL_ACCOUNT em falta ou inválido');
   };
+  const sleep = ms => new Promise(res => setTimeout(res, ms));
   const info = async body => {
-    const r = await f(base + '/info', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    if (!r.ok) throw new Error(`hyperliquid info ${r.status}`);
-    return r.json();
+    for (let a = 0; ; a++) {   // a Hyperliquid limita pedidos por endereço (429): espera e repete
+      const r = await f(base + '/info', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      if (r.status === 429 && a < 3) { await sleep(700 * (a + 1)); continue; }
+      if (!r.ok) throw new Error(`hyperliquid info ${r.status}`);
+      return r.json();
+    }
   };
   const post = async action => {
     need();

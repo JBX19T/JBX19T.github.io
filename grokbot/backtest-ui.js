@@ -11,10 +11,45 @@ let state={busy:false,msg:'',err:'',res:null,iv:'15m',coins:null};
 const api=()=>typeof HOLDERS_API==='string'?HOLDERS_API:'';
 const token=()=>window.LIVE&&LIVE.L.token||'';
 
-async function fetchCandles(iv){
+const HL='https://api.hyperliquid.xyz/info',MS={'15m':9e5,'1h':36e5};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const DEFAULT_COINS={GOLD:'xyz:GOLD',SPX:'xyz:SP500',EURUSD:'xyz:EUR'};   // nomes que o painel HYPERLIQUID já mostrou; se o painel os tiver, usa esses
+function knownCoins(){
+  try{const m=LIVE.P.hl.st&&LIVE.P.hl.st.markets;if(m){const o={};for(const k of Object.keys(DEFAULT_COINS))o[k]=m[k]&&m[k].coin||DEFAULT_COINS[k];return o}}catch(e){}
+  return DEFAULT_COINS;
+}
+/* 1.º caminho: o próprio telemóvel pede à Hyperliquid (o endereço do worker é partilhado e a Hyperliquid limita pedidos por endereço). Repete se vier 429. */
+async function fetchDirect(iv){
+  const coins=knownCoins(),end=Date.now(),start=Math.floor(end-5000*MS[iv]*.999),markets={};
+  for(const [k,coin] of Object.entries(coins)){
+    let arr=null,last='';
+    for(let a=0;a<4&&!arr;a++){
+      try{
+        const r=await fetch(HL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'candleSnapshot',req:{coin,interval:iv,startTime:start,endTime:end}})});
+        if(r.status===429){last='429';await sleep(1500*(a+1));continue}
+        if(!r.ok)throw new Error('HTTP '+r.status);
+        arr=await r.json();
+      }catch(e){last=e.message;if(a<3)await sleep(800)}
+    }
+    if(!Array.isArray(arr))throw new Error(`${coin}: ${last||'sem resposta'}`);
+    markets[k]={coin,bars:arr.map(x=>[x.t,+x.o,+x.h,+x.l,+x.c,+x.v])};
+    await sleep(250);
+  }
+  return{interval:iv,markets};
+}
+/* 2.º caminho (plano B): pelo worker */
+async function fetchViaWorker(iv){
   const f=window.CapacitorWebFetch||fetch;
   const r=await f(api()+'/hl/candles',{method:'POST',headers:{'x-token':token(),'content-type':'application/json'},body:JSON.stringify({interval:iv,days:iv==='15m'?52:210})});
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;
+}
+async function fetchCandles(iv){
+  try{state.msg='a descarregar velas da Hyperliquid (direto do telemóvel)…';render();return await fetchDirect(iv)}
+  catch(e){
+    if(!token())throw new Error('Pedido direto falhou ('+e.message+') e falta o token do worker para tentar o plano B.');
+    state.msg='o pedido direto falhou ('+e.message+'); a tentar pelo worker…';render();
+    try{return await fetchViaWorker(iv)}catch(e2){throw new Error('direto: '+e.message+' · worker: '+e2.message)}
+  }
 }
 function toBars(j){
   const out={},coins={};
@@ -23,8 +58,7 @@ function toBars(j){
 }
 async function run(){
   if(state.busy)return;
-  if(!token()){state.err='Falta o token do worker (APP_TOKEN).';return render()}
-  state={...state,busy:true,msg:'a descarregar velas da Hyperliquid…',err:'',res:null};render();
+  state={...state,busy:true,msg:'a preparar…',err:'',res:null};render();
   try{
     const j=await fetchCandles(state.iv),{bars,coins}=toBars(j);
     const ks=Object.keys(bars);if(!ks.length)throw new Error('a Hyperliquid não devolveu velas para ouro, S&P ou EUR/USD');
