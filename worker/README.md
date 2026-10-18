@@ -43,7 +43,7 @@ O worker agora usa bibliotecas, por isso já não se cola à mão no Cloudflare:
 | `HL_GUARD_DD` 0.2 | variável | proteção do servidor: queda desde o máximo que fecha tudo na Hyperliquid |
 | `SOL_GUARD_SL` 0.3, `SOL_GUARD_TP` 1, `SOL_GUARD_MAX_HOURS` 6, `SOL_STALE_MIN` 30 | variável | proteção do servidor nas memecoins (0 em `SOL_STALE_MIN` desliga a venda por app parada) |
 | `HL_AUTOPILOT` | variável | `1` liga o piloto automático no servidor (ver ponto 7). Desligado por omissão |
-| `HL_STRATEGY` breakout, `HL_INTERVAL` 15m | variável | estratégia (`breakout`, `reversion`, `trend`, `trail`) e velas (`15m`, `1h`, `4h`) do piloto |
+| `HL_STRATEGY` breakout, `HL_INTERVAL` 15m | variável | estratégia (`breakout`, `reversion`, `trend`, `trail`, `pullback`) e velas (`15m`, `1h`, `4h`) do piloto |
 | `HL_TP_TRIGGER` | variável | `1` volta ao alvo a mercado (por omissão o alvo é uma ordem limitada, com taxa de maker) |
 
 ### 3. Hyperliquid
