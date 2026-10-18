@@ -1,6 +1,7 @@
 // Cloudflare Worker: proxy de holders (Helius) para o DOLLOS Trade Bot. A chave fica em env.HELIUS_API_KEY (segredo).
 // GET /wallet?address=<carteira>  ->  { address, swaps:[{signature,timestamp,side,mint}] }  (trades que o bot pode copiar)
 // GET /holders?mint=<mint solana>  ->  { topWallet, top10, mintAuthority, freezeAuthority, supply, excluded }
+// /alpaca/*  ->  espelho das posições do Macro Desk numa conta de PAPER da Alpaca (segredos: ALPACA_KEY, ALPACA_SECRET, APP_TOKEN)
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SYSTEM = '11111111111111111111111111111111';
 // Donos conhecidos de pools/curvas (não são carteiras de investidores): Raydium AMM v4 e CPMM, pump.fun curve/AMM
@@ -68,6 +69,77 @@ export async function analyze(mint, rpc) {
   };
 }
 
+// ===== Alpaca (só PAPER) =====
+// Os endereços abaixo são fixos: não existe nenhum caminho para a conta real. Só ETFs de uma lista, valor máximo por ordem,
+// e todas as chamadas exigem o cabeçalho X-Token igual a env.APP_TOKEN (a origem sozinha não autentica ninguém).
+const AL_TRADE = 'https://paper-api.alpaca.markets/v2', AL_DATA = 'https://data.alpaca.markets/v2';
+const AL_ALLOW = new Set(['SPY', 'GLD', 'FXE']);   // S&P 500, ouro, euro: proxies ETF dos três mercados do Macro Desk
+const AL_MAX_NOTIONAL = 5000;
+
+function safeEq(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
+// devolve [status, corpo]; f permite simular a rede nos testes
+export async function alpaca(method, path, body, token, env, f = fetch) {
+  if (!env.APP_TOKEN || !env.ALPACA_KEY || !env.ALPACA_SECRET) return [503, { error: 'alpaca não configurado (faltam segredos)' }];
+  if (!safeEq(token || '', env.APP_TOKEN)) return [401, { error: 'token inválido' }];
+  const H = { 'APCA-API-KEY-ID': env.ALPACA_KEY, 'APCA-API-SECRET-KEY': env.ALPACA_SECRET, 'content-type': 'application/json' };
+  const call = async (u, opt = {}) => {
+    const r = await f(u, { ...opt, headers: H });
+    const t = await r.text();
+    let j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { /* corpo não-JSON */ }
+    if (!r.ok) throw Object.assign(new Error(`alpaca ${r.status}: ${(j && j.message) || t.slice(0, 120)}`), { status: r.status });
+    return j;
+  };
+  const symbolOk = s => typeof s === 'string' && AL_ALLOW.has(s);
+  try {
+    if (method === 'GET' && path === '/alpaca/state') {
+      const [clock, acct, pos] = await Promise.all([call(AL_TRADE + '/clock'), call(AL_TRADE + '/account'), call(AL_TRADE + '/positions')]);
+      return [200, { paper: true, open: !!clock.is_open, nextOpen: clock.next_open, nextClose: clock.next_close,
+        equity: +acct.equity, cash: +acct.cash, status: acct.status,
+        positions: (pos || []).filter(p => AL_ALLOW.has(p.symbol)).map(p => ({ symbol: p.symbol, qty: +p.qty, side: p.side, avg: +p.avg_entry_price, value: +p.market_value, pl: +p.unrealized_pl })) }];
+    }
+    if (method === 'POST' && path === '/alpaca/order') {
+      const { symbol, side } = body || {}, notional = Math.min(+(body || {}).notional, AL_MAX_NOTIONAL);
+      if (!symbolOk(symbol)) return [400, { error: 'símbolo não permitido' }];
+      if (side !== 'buy' && side !== 'sell') return [400, { error: 'side inválido' }];
+      if (!(notional > 0)) return [400, { error: 'valor inválido' }];
+      const clock = await call(AL_TRADE + '/clock');
+      if (!clock.is_open) return [200, { skipped: 'mercado fechado' }];
+      const [pos, open] = await Promise.all([
+        call(AL_TRADE + '/positions').then(a => a.some(p => p.symbol === symbol)),
+        call(AL_TRADE + `/orders?status=open&symbols=${symbol}`).then(a => a.length > 0),
+      ]);
+      if (pos) return [200, { skipped: 'já existe posição' }];
+      if (open) return [200, { skipped: 'ordem pendente' }];
+      const px = (await call(AL_DATA + `/stocks/${symbol}/trades/latest?feed=iex`))?.trade?.p;
+      if (!(px > 0)) throw new Error('sem preço para ' + symbol);
+      const qty = Math.floor(notional / px);   // ações inteiras: a Alpaca só deixa vender a descoberto quantidades inteiras
+      if (qty < 1) return [200, { skipped: 'valor abaixo de 1 ação' }];
+      const o = await call(AL_TRADE + '/orders', { method: 'POST', body: JSON.stringify({ symbol, qty: String(qty), side, type: 'market', time_in_force: 'day' }) });
+      return [200, { id: o.id, symbol, side, qty, status: o.status, price: px }];
+    }
+    if (method === 'POST' && path === '/alpaca/close') {
+      const { symbol } = body || {};
+      if (!symbolOk(symbol)) return [400, { error: 'símbolo não permitido' }];
+      const clock = await call(AL_TRADE + '/clock');
+      if (!clock.is_open) return [200, { skipped: 'mercado fechado' }];
+      try {
+        const o = await call(AL_TRADE + `/positions/${symbol}`, { method: 'DELETE' });
+        return [200, { id: o && o.id, symbol, status: o && o.status }];
+      } catch (e) {
+        if (e.status === 404) return [200, { skipped: 'sem posição' }];
+        throw e;
+      }
+    }
+  } catch (e) { return [502, { error: String(e.message || e) }]; }
+  return [404, { error: 'not found' }];
+}
+
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -78,7 +150,14 @@ export default {
       'Vary': 'Origin',
     };
     const json = (b, s = 200, extra = {}) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json', ...cors, ...extra } });
-    if (req.method === 'OPTIONS') return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET' } });
+    if (req.method === 'OPTIONS') return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'X-Token, Content-Type' } });
+    if (url.pathname.startsWith('/alpaca/')) {
+      if (allowed.length && !allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403);
+      let body = null;
+      if (req.method === 'POST') { try { body = await req.json(); } catch (e) { return json({ error: 'json inválido' }, 400); } }
+      const [st, out] = await alpaca(req.method, url.pathname, body, req.headers.get('x-token'), env);
+      return json(out, st, { 'cache-control': 'no-store' });
+    }
     if (url.pathname !== '/holders' && url.pathname !== '/wallet') return json({ error: 'not found' }, 404);
     if (allowed.length && !allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403);
     if (url.pathname === '/wallet') {

@@ -4,7 +4,7 @@
 (()=>{
 const LT='https://mainnet.zklighter.elliot.ai';
 const DEMO=new URLSearchParams(location.search).has('demo');
-const CFG={start:10000,riskPct:.01,maxLev:2,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:2,ddStop:.20,dayLoss:.05,
+const CFG={start:10000,riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:2,ddStop:.20,dayLoss:.05,
   res:'15m',resMs:15*60e3,minATRpct:.0005,maxATRpct:.03,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
 /* Lighter negoceia estes ativos como perpétuos: o ouro via PAXG (token lastreado a ouro) e o S&P via SPY (ETF) — são proxies. */
 const MK=[
@@ -177,7 +177,7 @@ function bind(){
 }
 
 async function start(){
-  if(!$m('mkBody'))return;bind();render();
+  if(!$m('mkBody'))return;bind();alBind();render();
   if(DEMO){demoInit();setInterval(()=>{MK.forEach(demoStep);record();render()},CFG.candlePoll);render();return}
   try{await discover()}catch(e){MK.forEach(m=>P[m.key].err=e.message);L('l','mercados: '+e.message)}
   const loop=async()=>{await Promise.all(MK.map(pollPrice));render()};
@@ -185,6 +185,71 @@ async function start(){
   await loop();cloop();setInterval(loop,CFG.pricePoll);setInterval(cloop,CFG.candlePoll);
   setInterval(()=>MK.forEach(m=>{const p=P[m.key];if(p.src==='ticks'&&p.newBar){p.newBar=false;onBar(m)}}),5000);
 }
-window.MACRO={guard,resume,CFG,MK,P,ema,atr,signal,sizeFor,parseMarkets,pickMarket,parseDetail,parseCandles,state:()=>S,reset:()=>{S=fresh()},equity,unreal,open:(k,d,s)=>open(MK.find(m=>m.key===k),d,s),close:k=>close(MK.find(m=>m.key===k),'teste'),setPrice:(k,px)=>{P[k].px=px},checkExits:k=>checkExits(MK.find(m=>m.key===k))};
+/* ===== ALPACA (paper): espelha as posições do Macro Desk numa conta de paper trading da Alpaca =====
+   Passa pelo worker (/alpaca/*), que guarda as chaves e só fala com o endereço de PAPER. Estratégia de sincronização:
+   a cada minuto compara a posição que o Macro Desk quer (S.pos) com a que existe na Alpaca e envia só a diferença,
+   apenas com o mercado de ações aberto. ETFs: ouro→GLD, EUR/USD→FXE, S&P→SPY. */
+const AL_MAP={GOLD:'GLD',EURUSD:'FXE',SPX:'SPY'},AL_KEY='dollosAlpacaV1',AL_POLL=60000;
+const AL={on:false,token:'',st:null,err:'',busy:false,managed:{},log:[]};
+try{const j=JSON.parse(localStorage.getItem(AL_KEY)||'null');if(j&&j.token)Object.assign(AL,{on:!!j.on,token:j.token,managed:j.managed||{}})}catch(e){}
+const alSave=()=>{try{localStorage.setItem(AL_KEY,JSON.stringify({on:AL.on,token:AL.token,managed:AL.managed}))}catch(e){}};
+const alApi=()=>typeof HOLDERS_API==='string'?HOLDERS_API:'';
+async function alFetch(method,path,body){
+  const f=window.CapacitorWebFetch||fetch,r=await f(alApi()+path,{method,headers:{'x-token':AL.token,...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;
+}
+const alNote=t=>{AL.log.unshift(new Date().toISOString().slice(11,16)+' '+t);AL.log.length=Math.min(AL.log.length,5);L('p','ALPACA '+t)};
+/* decide o que enviar: puro, para testar */
+function alPlan(want,have,managed){   // want: {SYM:{side:'buy'|'sell',notional}}, have: {SYM:'buy'|'sell'}
+  const acts=[];
+  for(const sym of new Set([...Object.keys(want),...Object.keys(have)])){
+    const w=want[sym],h=have[sym];
+    if(w&&!h)acts.push({op:'open',symbol:sym,side:w.side,notional:w.notional});
+    else if(h&&(!w||w.side!==h)&&managed[sym])acts.push({op:'close',symbol:sym});
+  }
+  return acts;
+}
+async function alSync(){
+  if(!AL.on||AL.busy||DEMO)return;AL.busy=true;
+  try{
+    const st=await alFetch('GET','/alpaca/state');AL.st=st;AL.err='';
+    if(st.open){
+      const want={};for(const m of MK){const p=S.pos[m.key];if(p)want[AL_MAP[m.key]]={side:p.side>0?'buy':'sell',notional:p.notional}}
+      const have={};st.positions.forEach(p=>have[p.symbol]=p.side==='long'?'buy':'sell');
+      for(const a of alPlan(want,have,AL.managed)){
+        const r=await alFetch('POST',a.op==='open'?'/alpaca/order':'/alpaca/close',a);
+        if(r.skipped){AL.err=a.symbol+': '+r.skipped;continue}
+        if(a.op==='open'){AL.managed[a.symbol]=true;alNote(`${a.side==='buy'?'COMPRA':'VENDA A DESCOBERTO'} ${r.qty} ${a.symbol} @ ~${(+r.price).toFixed(2)}`)}
+        else{delete AL.managed[a.symbol];alNote(`FECHO ${a.symbol}`)}
+        alSave();
+      }
+      AL.st=await alFetch('GET','/alpaca/state');
+    }
+  }catch(e){AL.err=e.message}
+  AL.busy=false;alRender();
+}
+function alRender(){
+  const el=$m('alBody');if(!el)return;
+  if(DEMO||!alApi()){el.innerHTML='';return}
+  const st=AL.st;
+  el.innerHTML=!AL.on?`<div class="alh"><b>ALPACA · PAPER</b><small>copia as posições do Macro Desk (ouro→GLD, EUR/USD→FXE, S&amp;P→SPY) numa conta de paper trading real da Alpaca</small></div>
+      <div class="pmbar"><input id="alTok" type="password" autocomplete="off" placeholder="token do worker (APP_TOKEN)"><button class="ghost" id="alOn">LIGAR</button></div>
+      <div class="note">Precisas de ter configurado os segredos ALPACA_KEY, ALPACA_SECRET e APP_TOKEN no Cloudflare Worker. O token fica só neste aparelho. Só dinheiro fictício: o worker só fala com a conta de paper.</div>`
+    :`<div class="alh"><b>ALPACA · PAPER</b><small>${st?`${st.open?'mercado ABERTO':'mercado FECHADO'} · equity $${(+st.equity).toFixed(2)} · ${st.status}`:'a ligar…'}</small><button class="ghost" id="alOff">DESLIGAR</button></div>
+      ${AL.err?`<div class="note">⚠ ${AL.err}</div>`:''}
+      ${st&&st.positions.length?`<table><thead><tr><th>ETF</th><th></th><th>Qtd</th><th>Entrada</th><th>P/L</th></tr></thead><tbody>${st.positions.map(p=>`<tr><td>${p.symbol}</td><td>${p.side==='long'?'LONG':'SHORT'}</td><td>${Math.abs(p.qty)}</td><td>${p.avg.toFixed(2)}</td><td class="${p.pl>=0?'up':'dn'}">${p.pl>=0?'+':''}${usd(p.pl)}</td></tr>`).join('')}</tbody></table>`:'<div class="note">Sem posições na Alpaca.</div>'}
+      ${AL.log.length?`<div class="note">${AL.log.join('<br>')}</div>`:''}
+      <div class="note">Só envia ordens com a bolsa dos EUA aberta (seg–sex, 14:30–21:00 em Portugal). Fora desse horário o Macro Desk continua mas a Alpaca espera.</div>`;
+}
+function alBind(){
+  const el=$m('alBody');if(!el)return;
+  el.addEventListener('click',e=>{
+    if(e.target.id==='alOn'){const t=($m('alTok').value||'').trim();if(!t)return;AL.token=t;AL.on=true;AL.err='';alSave();alRender();alSync()}
+    if(e.target.id==='alOff'){AL.on=false;AL.st=null;alSave();alRender()}
+  });
+  alRender();setInterval(alSync,AL_POLL);if(AL.on)setTimeout(alSync,3000);
+}
+
+window.MACRO={alPlan,AL,alSync,guard,resume,CFG,MK,P,ema,atr,signal,sizeFor,parseMarkets,pickMarket,parseDetail,parseCandles,state:()=>S,reset:()=>{S=fresh()},equity,unreal,open:(k,d,s)=>open(MK.find(m=>m.key===k),d,s),close:k=>close(MK.find(m=>m.key===k),'teste'),setPrice:(k,px)=>{P[k].px=px},checkExits:k=>checkExits(MK.find(m=>m.key===k))};
 start();
 })();
