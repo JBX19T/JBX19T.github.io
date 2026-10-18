@@ -13,7 +13,7 @@ const MK=[
   {key:'SPX',   label:'S&P 500', note:'SPY',   match:[/^SPY$/i,/^SPX/i,/^US500/i],   dec:2,sim:[760,.0007]},
 ];
 const LS_KEY='dollosMacroV1';
-const fresh=()=>({cash:CFG.start,pos:{},hist:[CFG.start],closed:0,wins:0,log:[],peak:CFG.start,halt:null,day:{d:'',eq:CFG.start}});
+const fresh=()=>({cash:CFG.start,pos:{},hist:[CFG.start],closed:0,wins:0,log:[],peak:CFG.start,halt:null,day:{d:'',eq:CFG.start},trades:[],since:Date.now(),maxDD:0,ddPeak:CFG.start});
 let S=fresh();
 if(!DEMO){try{const j=JSON.parse(localStorage.getItem(LS_KEY)||'null');if(j&&j.cash>0)S={...fresh(),...j}}catch(e){}}
 const save=()=>{if(DEMO)return;try{localStorage.setItem(LS_KEY,JSON.stringify(S))}catch(e){}};
@@ -53,7 +53,8 @@ function open(m,dir,sig){
 function close(m,why){
   const p=S.pos[m.key],px=P[m.key].px;if(!p||px==null)return;
   const pnl=unreal(p,px)-p.notional*cost();S.cash+=pnl;S.closed++;if(pnl>0)S.wins++;delete S.pos[m.key];
-  L(pnl>0?'w':'l',`FECHO ${m.label} ${why} ${pnl>=0?'+':''}${usd(pnl)}`);save();
+  S.trades.push({l:m.label,side:p.side,o:p.opened,c:Date.now(),en:p.entry,ex:px,nt:p.notional,pnl,why});if(S.trades.length>500)S.trades.shift();
+  L(pnl>0?'w':'l',`FECHO ${m.label} ${why} ${pnl>=0?'+':''}${usd(pnl)}`);save();window.RESULTS&&RESULTS.refresh();
 }
 function checkExits(m){
   const p=S.pos[m.key],px=P[m.key].px;if(!p||px==null)return;
@@ -66,7 +67,7 @@ function haltAll(kind,msg,why,day){MK.forEach(m=>{if(S.pos[m.key])close(m,why)})
 function guard(){   // proteção de capital: corre a cada atualização de preços
   const e=equity(),d=today();
   if(!S.day||S.day.d!==d)S.day={d,eq:e};
-  if(e>S.peak)S.peak=e;
+  if(e>S.peak)S.peak=e;if(e>S.ddPeak)S.ddPeak=e;S.maxDD=Math.max(S.maxDD||0,1-e/S.ddPeak);
   if(!S.halt){
     if(e<=S.peak*(1-CFG.ddStop))haltAll('dd',`perda de ${Math.round(CFG.ddStop*100)}% desde o máximo da conta`,'kill-switch');
     else if(e<=S.day.eq*(1-CFG.dayLoss))haltAll('day',`perda diária de ${Math.round(CFG.dayLoss*100)}%`,'limite diário',d);

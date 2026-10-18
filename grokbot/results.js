@@ -1,0 +1,60 @@
+/* DOLLOS · RESULTADOS — estatísticas das trades fechadas dos dois desks (memecoins e macro).
+   Só lê o estado dos desks; não altera nada. */
+(()=>{
+const $r=id=>document.getElementById(id);
+const usd=v=>(v>0?'+$':v<0?'-$':'$')+Math.abs(v).toFixed(2);
+const pct=v=>v==null?'—':(v>=0?'+':'')+(v*100).toFixed(1)+'%';
+const sum=a=>a.reduce((s,t)=>s+t.pnl,0);
+const MIN_TRADES=30;
+const REASON={'take-profit':'alvo','stop-loss':'stop','time-stop':'tempo','manual':'manual','kill-switch':'paragem','limite diário':'limite diário','follow-exit':'copy-exit'};
+
+/* estatísticas puras (testáveis) */
+function compute(trades,start,maxDD,since){
+  const n=trades.length,w=trades.filter(t=>t.pnl>0),l=trades.filter(t=>t.pnl<=0);
+  const gw=sum(w),gl=-sum(l),net=sum(trades);
+  const byReason={},byDay={};
+  for(const t of trades){
+    const r=REASON[t.why]||t.why||'?';(byReason[r]??={n:0,pnl:0});byReason[r].n++;byReason[r].pnl+=t.pnl;
+    const d=new Date(t.c).toISOString().slice(0,10);(byDay[d]??={n:0,pnl:0});byDay[d].n++;byDay[d].pnl+=t.pnl;
+  }
+  return{n,wins:w.length,losses:l.length,rate:n?w.length/n:null,net,netPct:start?net/start:null,
+    avgWin:w.length?gw/w.length:null,avgLoss:l.length?-gl/l.length:null,
+    pf:gl>0?gw/gl:(gw>0?Infinity:null),exp:n?net/n:null,
+    best:n?Math.max(...trades.map(t=>t.pnl)):null,worst:n?Math.min(...trades.map(t=>t.pnl)):null,
+    maxDD:maxDD||0,since,byReason,byDay};
+}
+function ago(ts){if(!ts)return '—';const m=Math.max(0,Math.round((Date.now()-ts)/60000));return m<60?m+' min':m<1440?Math.floor(m/60)+'h '+m%60+'m':Math.floor(m/1440)+'d '+Math.floor(m%1440/60)+'h'}
+
+function block(title,st,eq){
+  const row=(a,b)=>`<div class="rr"><span>${a}</span><b>${b}</b></div>`;
+  const reasons=Object.entries(st.byReason).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>`<tr><td>${k}</td><td>${v.n}</td><td class="${v.pnl>=0?'up':'dn'}">${usd(v.pnl)}</td></tr>`).join('');
+  const days=Object.entries(st.byDay).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,5).map(([k,v])=>`<tr><td>${k.slice(5)}</td><td>${v.n}</td><td class="${v.pnl>=0?'up':'dn'}">${usd(v.pnl)}</td></tr>`).join('');
+  const enough=st.n>=MIN_TRADES;
+  return `<div class="rs"><h4>${title}<small>há ${ago(st.since)}</small></h4>
+    ${row('Resultado (fechadas)',`<span class="${st.net>=0?'up':'dn'}">${usd(st.net)} (${pct(st.netPct)})</span>`)}
+    ${row('Equity agora',`$${eq.toFixed(2)}`)}
+    ${row('Trades',`${st.n} · ${st.wins}W ${st.losses}L`)}
+    ${row('Taxa de acerto',st.rate==null?'—':(st.rate*100).toFixed(0)+'%')}
+    ${row('Ganho / perda média',st.n?`${st.avgWin==null?'—':usd(st.avgWin)} / ${st.avgLoss==null?'—':usd(-st.avgLoss)}`:'—')}
+    ${row('Fator de lucro',st.pf==null?'—':st.pf===Infinity?'∞':st.pf.toFixed(2))}
+    ${row('Média por trade',st.exp==null?'—':usd(st.exp))}
+    ${row('Melhor / pior',st.n?`${usd(st.best)} / ${usd(st.worst)}`:'—')}
+    ${row('Pior queda',(st.maxDD*100).toFixed(1)+'%')}
+    ${reasons?`<div class="sub">POR SAÍDA</div><table><tbody>${reasons}</tbody></table>`:''}
+    ${days?`<div class="sub">POR DIA (UTC)</div><table><tbody>${days}</tbody></table>`:''}
+    <div class="note">${st.n===0?'Ainda sem trades fechadas.':enough?'Amostra razoável, mas continua a ser dinheiro fictício.':`Amostra pequena (${st.n}/${MIN_TRADES}): ainda não dá para concluir nada.`}</div></div>`;
+}
+
+function refresh(){
+  const body=$r('resBody');if(!body)return;
+  const blocks=[];
+  try{const M=window.MEME;if(M){const S=M.state();blocks.push(block('MEMECOINS',compute(S.trades||[],M.start(),S.maxDD,S.since),S.cash+S.positions.reduce((s,p)=>s+p.size*(p.px/p.entry),0)))}}catch(e){}
+  try{const K=window.MACRO;if(K){const S=K.state();blocks.push(block('MACRO',compute(S.trades||[],K.CFG.start,S.maxDD,S.since),K.equity()))}}catch(e){}
+  body.innerHTML=`<div class="rsg">${blocks.join('')}</div>
+    <div class="note">Dinheiro fictício: ignora parte do atrito real (slippage na saída, ordens falhadas, rugs mais rápidos do que o preço lido). Os resultados reais seriam piores. Fator de lucro acima de 1 = ganhou mais do que perdeu. Só conta com 30+ trades fechadas.</div>`;
+  const tot=[window.MEME&&MEME.state().trades.length,window.MACRO&&MACRO.state().trades.length].filter(x=>x!=null).reduce((a,b)=>a+b,0);
+  $r('resInfo').textContent=tot+' TRADES FECHADAS';
+}
+window.RESULTS={compute,refresh};
+refresh();setInterval(refresh,10000);
+})();
