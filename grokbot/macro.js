@@ -4,8 +4,11 @@
 (()=>{
 const LT='https://mainnet.zklighter.elliot.ai';
 const DEMO=new URLSearchParams(location.search).has('demo');
-const CFG={start:10000,riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:2,ddStop:.20,dayLoss:.05,
-  res:'15m',resMs:15*60e3,minATRpct:.0005,maxATRpct:.03,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
+const CFG={start:10000,riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:9,   // ~9 bps por ordem de mercado nos mercados HIP-3 da Hyperliquid (valor de uma fonte secundária, por confirmar)
+ ddStop:.20,dayLoss:.05,
+  res:'15m',resMs:15*60e3,maxATRpct:.03,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
+/* só entra se o alvo (3×ATR) for pelo menos 3× o custo de entrar e sair: ATR >= 2×custo. Com 9 bps isto exige ATR >= 0,18% do preço */
+CFG.minATRpct=Math.max(.0005,2*CFG.costBps/1e4);
 /* Lighter negoceia estes ativos como perpétuos: o ouro via PAXG (token lastreado a ouro) e o S&P via SPY (ETF) — são proxies. */
 const MK=[
   {key:'GOLD',  label:'OURO',    note:'PAXG',  match:[/^PAXG$/i,/^XAU/i,/^GOLD$/i],dec:2,sim:[4150,.0009]},
