@@ -121,6 +121,7 @@ export function makeHL(env, f = fetch) {
   }
 
   async function accountOf(dex) {
+    if (!ADDR.test(env.HL_ACCOUNT || '')) throw new Error('HL_ACCOUNT em falta ou inválido (endereço 0x… da conta principal da Hyperliquid)');
     const [st, oo] = await Promise.all([info({ type: 'clearinghouseState', user: env.HL_ACCOUNT, dex }), info({ type: 'openOrders', user: env.HL_ACCOUNT, dex })]);
     const positions = (st.assetPositions || []).map(a => a.position).filter(Boolean).map(p => ({ coin: p.coin, szi: parseFloat(p.szi), entryPx: parseFloat(p.entryPx), pnl: parseFloat(p.unrealizedPnl) }));
     return { equity: parseFloat(st.marginSummary && st.marginSummary.accountValue) || 0, positions, orders: oo || [] };
