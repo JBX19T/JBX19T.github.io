@@ -84,15 +84,14 @@ th:first-child,td:first-child{text-align:left}
 .rs .sub{color:var(--dim);font-size:9.5px;margin:7px 0 0;letter-spacing:.5px}
 .mkacc{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 8px;font-size:11px;color:var(--dim)}.mkacc b{color:#fff}
 #mkBody{padding:4px 12px 12px;font-size:11px}
-#alBody{padding:0 12px 12px;font-size:11px;border-top:1px solid var(--line);margin-top:4px}
 .alh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;padding-top:10px;margin-bottom:6px}.alh b{font:800 12px system-ui,sans-serif;letter-spacing:1px;color:#fff}.alh small{color:var(--dim);font-size:10px;flex:1;min-width:0}
-#alTok{flex:1;min-width:0}
+
 .log{max-height:150px;overflow:auto;padding:4px 12px 10px;font-size:11px;line-height:1.7}
 .log .t{color:var(--dim)}.log .w{color:var(--green)}.log .l{color:var(--red)}.log .p{color:var(--hot)}
 .foot{color:#777;font-size:10px;text-align:center;margin-top:8px}
 @media(max-width:820px){.cards{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}header .tag{display:none}}
 @media(max-width:600px){
-  .mkg,.rsg{grid-template-columns:1fr}.mkp{font-size:16px}#mkBody,#resBody{padding:4px 8px 10px}.livebody{padding:0 8px 10px}#alBody{padding:0 8px 10px}
+  .mkg,.rsg{grid-template-columns:1fr}.mkp{font-size:16px}#mkBody,#resBody{padding:4px 8px 10px}.livebody{padding:0 8px 10px}
   body{padding:8px}
   header{flex-wrap:wrap;gap:8px 10px}
   header h1{font-size:17px;letter-spacing:1.5px;white-space:nowrap;flex:1}
@@ -131,7 +130,7 @@ th:first-child,td:first-child{text-align:left}
 
 <div class="panel"><div class="ph"><span id="balLabel">BALANCE · DAY 1 · PAPER</span><em id="balPnl"></em></div><canvas id="bal" height="150"></canvas></div>
 
-<div class="panel"><div class="ph"><span>MACRO DESK · OURO · EUR/USD · S&amp;P 500</span><em id="mkInfo"></em></div><div id="mkBody"></div><div id="alBody"></div></div>
+<div class="panel"><div class="ph"><span>MACRO DESK · OURO · EUR/USD · S&amp;P 500</span><em id="mkInfo"></em></div><div id="mkBody"></div></div>
 
 <div class="panel"><div class="ph"><span>HYPERLIQUID · LIVE</span><em id="hlInfo"></em></div><div id="hlBody" class="livebody"></div></div>
 

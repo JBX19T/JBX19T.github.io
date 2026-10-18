@@ -25,3 +25,6 @@ assert.equal(s.status, 200); assert.equal(sj.mode, 'simulacao'); assert.equal(sj
 assert.equal((await call('/hl/nada', { token: 'segredo' })).status, 404);
 assert.equal((await worker.fetch(new Request('https://w.example/hl/state', { method: 'OPTIONS', headers: { Origin: 'https://jbx19t.github.io' } }), env, {})).status, 200);
 console.log('router ok');
+// a Alpaca foi removida: as rotas já não existem
+assert.equal((await call('/alpaca/state', { token: 'segredo' })).status, 404);
+console.log('alpaca removida ok');
