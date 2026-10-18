@@ -85,3 +85,16 @@ console.log('TUDO OK');
   assert.equal(ex(S).length,0); assert.match(JSON.stringify(r.results[0].detail),/já existe/); console.log('ok   15 corrida entre duas sincronizações: não duplica'); }
 // 16 sem HL_ACCOUNT: erro claro em vez de pedir à Hyperliquid
 { const {S,f}=sim(); const hl=makeHL({HL_AGENT_KEY:AGENT},f); await assert.rejects(()=>hl.sync(want),/HL_ACCOUNT em falta/); console.log('ok   16 sem HL_ACCOUNT -> erro claro'); const st=await hl.state(); assert.equal(st.markets.GOLD.coin,'xyz:GOLD'); assert.ok(st.agentAddress); console.log('ok   16b o estado mostra os mercados mesmo sem conta'); }
+
+// 17 o "SPX" do mercado principal (memecoin) não pode passar por S&P 500; só xyz com preço plausível
+{ const f=async(u,o)=>{const b=JSON.parse(o.body);const R=j=>({ok:true,status:200,text:async()=>JSON.stringify(j),json:async()=>j});
+    if(b.type==='perpDexs')return R([null,{name:'xyz'}]);
+    if(b.type==='meta')return R({universe:b.dex==='xyz'?[{name:'xyz:GOLD',szDecimals:4,maxLeverage:10},{name:'xyz:SP500',szDecimals:3,maxLeverage:10},{name:'xyz:EUR',szDecimals:2,maxLeverage:10}]:[{name:'SPX',szDecimals:1,maxLeverage:5},{name:'GOLD',szDecimals:2,maxLeverage:5}]});
+    if(b.type==='allMids')return R(b.dex==='xyz'?{'xyz:GOLD':'4100','xyz:SP500':'7600','xyz:EUR':'1.12'}:{SPX:'1.3',GOLD:'0.5'});
+    throw new Error('x')};
+  const d=await makeHL(env(),f).discover();
+  assert.equal(d.resolved.SPX.coin,'xyz:SP500'); assert.equal(d.resolved.GOLD.coin,'xyz:GOLD'); assert.equal(d.resolved.EURUSD.coin,'xyz:EUR');
+  // se o único candidato tiver um preço absurdo, fica por resolver
+  const f2=async(u,o)=>{const b=JSON.parse(o.body);if(b.type==='allMids'&&b.dex==='xyz')return {ok:true,status:200,json:async()=>({'xyz:GOLD':'4100','xyz:SP500':'1.3','xyz:EUR':'1.12'}),text:async()=>''};return f(u,o)};
+  const d2=await makeHL(env(),f2).discover(); assert.equal(d2.resolved.SPX,null); assert.ok(d2.rejected.some(x=>x.includes('SP500')));
+  console.log('ok   17 SPX da memecoin e preços absurdos são rejeitados'); }

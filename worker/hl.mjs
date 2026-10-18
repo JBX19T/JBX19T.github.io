@@ -64,6 +64,8 @@ const MARKET_PATTERNS = {
   EURUSD: /^(?:[a-z0-9_-]+:)?(?:EUR|EURUSD)(?:[-/]?USD)?$/i,
 };
 export const MARKET_KEYS = Object.keys(MARKET_PATTERNS);
+// o preço tem de fazer sentido para o ativo (evita apanhar, por nome, uma memecoin do mercado principal como se fosse o S&P 500)
+export const PLAUSIBLE = { GOLD: [300, 30000], SPX: [500, 60000], EURUSD: [0.5, 2] };
 const num = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : d; };
 const ADDR = /^0x[0-9a-fA-F]{40}$/;
 let lastNonce = 0;
@@ -111,13 +113,19 @@ export function makeHL(env, f = fetch) {
       const [meta, mids] = await Promise.all([info({ type: 'meta', dex: d.name }), info({ type: 'allMids', dex: d.name })]);
       (meta.universe || []).forEach((u, i) => coins.set(u.name, { coin: u.name, dex: d.name, asset: d.offset + i, szDecimals: u.szDecimals, maxLeverage: u.maxLeverage, mid: parseFloat(mids[u.name]) || null }));
     }
-    const resolved = {};
+    const resolved = {}, rejected = [];
     for (const k of MARKET_KEYS) {
       const want = pinned[k];
-      resolved[k] = (want && coins.get(want)) || [...coins.values()].find(c => MARKET_PATTERNS[k].test(c.coin)) || null;
+      if (want && coins.get(want)) { resolved[k] = coins.get(want); continue; }   // nome fixado por ti: usa-se como está
+      const [lo, hi] = PLAUSIBLE[k];
+      // só nos mercados de builders (xyz...), nunca no principal, e só com preço plausível
+      const cands = [...coins.values()].filter(c => c.dex !== '' && MARKET_PATTERNS[k].test(c.coin));
+      const good = cands.find(c => c.mid && c.mid >= lo && c.mid <= hi);
+      cands.filter(c => c !== good && !(c.mid && c.mid >= lo && c.mid <= hi)).forEach(c => rejected.push(`${k}: ${c.coin} (preço ${c.mid})`));
+      resolved[k] = good || null;
     }
-    const seen = [...coins.keys()].filter(n => /GOLD|XAU|SPX|SP500|US500|EUR/i.test(n)).slice(0, 30);
-    return { coins, resolved, seen, dexes: scan.map(d => d.name || 'main') };
+    const seen = [...coins.values()].filter(c => /GOLD|XAU|SPX|SP500|US500|EUR/i.test(c.coin)).map(c => `${c.coin} ${c.mid ?? ''}`.trim()).slice(0, 30);
+    return { coins, resolved, seen, rejected, dexes: scan.map(d => d.name || 'main') };
   }
 
   async function accountOf(dex) {
@@ -131,7 +139,7 @@ export function makeHL(env, f = fetch) {
     const out = { network, mode: live ? 'real' : 'simulacao', paused: env.HL_PAUSED === '1', caps, configured: !!(env.HL_AGENT_KEY && env.HL_ACCOUNT) };
     if (env.HL_AGENT_KEY && /^0x[0-9a-fA-F]{64}$/.test(env.HL_AGENT_KEY)) out.agentAddress = addressOf(env.HL_AGENT_KEY);
     const d = await discover();
-    out.dexes = d.dexes; out.seen = d.seen;
+    out.dexes = d.dexes; out.seen = d.seen; out.rejected = d.rejected;
     out.markets = Object.fromEntries(MARKET_KEYS.map(k => [k, d.resolved[k] ? { coin: d.resolved[k].coin, asset: d.resolved[k].asset, mid: d.resolved[k].mid, maxLeverage: d.resolved[k].maxLeverage } : null]));
     if (ADDR.test(env.HL_ACCOUNT || '')) {
       out.account = {}; out.positions = []; out.openOrders = 0;
