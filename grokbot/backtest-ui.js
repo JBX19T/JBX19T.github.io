@@ -7,7 +7,10 @@ const usd=v=>(v>0?'+$':v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const pct=v=>v==null||!isFinite(v)?'—':(v>=0?'+':'')+(v*100).toFixed(1)+'%';
 const dt=t=>new Date(t).toISOString().slice(0,10);
 const IV={'15m':{label:'15 min · cerca de 50 dias',note:'as mesmas velas do Macro Desk'},'1h':{label:'1 hora · cerca de 7 meses',note:'teste de robustez: a estratégia foi feita para 15 min'},'4h':{label:'4 horas · até cerca de 2 anos',note:'robustez com velas maiores (o custo pesa menos); o período real pode ser mais curto se o mercado for mais recente'}};
-let state={busy:false,msg:'',err:'',res:null,iv:'15m',coins:null};
+let state={busy:false,msg:'',err:'',res:null,iv:'15m',coins:null,src:'hl'};
+/* origem das velas: os mercados reais da Hyperliquid (curtos: só existem há ~300 dias) ou um histórico longo desde 2020
+   na Binance (ouro através do PAXG, EUR/USD através do EURUSDT; sem S&P 500), que dá centenas de trades para confirmar */
+const SRC={hl:{label:'Hyperliquid (mercados reais, ~300 dias)'},long:{label:'Histórico longo desde 2020 (Binance: ouro e EUR/USD)'}};
 const api=()=>typeof HOLDERS_API==='string'?HOLDERS_API:'';
 const token=()=>window.LIVE&&LIVE.L.token||'';
 
@@ -51,6 +54,31 @@ async function fetchCandles(iv){
     try{return await fetchViaWorker(iv)}catch(e2){throw new Error('direto: '+e.message+' · worker: '+e2.message)}
   }
 }
+/* histórico longo: velas públicas da Binance (1000 por pedido), desde 2020; no máximo 30 000 velas por mercado */
+const BINANCE=['https://data-api.binance.vision','https://api.binance.com'];
+const LONG_COINS={GOLD:'PAXGUSDT',EURUSD:'EURUSDT'},LONG_FROM=Date.UTC(2020,0,1),LONG_MAX=30000;
+async function fetchBinance(iv){
+  const markets={},end=Date.now();
+  for(const [k,sym] of Object.entries(LONG_COINS)){
+    const rows=[];let t=Math.max(LONG_FROM,end-LONG_MAX*MS[iv]),host=0,fails=0;
+    while(t<end&&rows.length<LONG_MAX){
+      let arr=null;
+      try{const r=await fetch(`${BINANCE[host]}/api/v3/klines?symbol=${sym}&interval=${iv}&startTime=${t}&limit=1000`);
+        if(r.status===429||r.status===418){await sleep(2000);continue}
+        if(!r.ok)throw new Error('HTTP '+r.status);arr=await r.json()}
+      catch(e){if(++fails>4)throw new Error(`${sym}: ${e.message}`);host=(host+1)%BINANCE.length;await sleep(700);continue}
+      if(!Array.isArray(arr)||!arr.length)break;
+      for(const x of arr)if(x[0]+MS[iv]<=end)rows.push([x[0],+x[1],+x[2],+x[3],+x[4],+x[5]]);
+      t=arr[arr.length-1][0]+MS[iv];
+      state.msg=`a descarregar histórico longo da Binance: ${sym} ${rows.length} velas…`;render();
+      if(arr.length<1000)break;
+      await sleep(120);
+    }
+    if(rows.length)markets[k]={coin:sym+' (Binance)',bars:rows};
+  }
+  if(!Object.keys(markets).length)throw new Error('a Binance não devolveu velas');
+  return{interval:iv,markets};
+}
 /* funding real de cada hora (fundingHistory devolve 500 horas por pedido): no máximo 4 pedidos por mercado, os mais recentes;
    nas horas sem dado o teste usa a média das horas conhecidas */
 async function fetchFunding(coins,from,to){
@@ -89,14 +117,16 @@ async function run(){
   if(state.busy)return;
   state={...state,busy:true,msg:'a preparar…',err:'',res:null,csv:''};render();
   try{
-    const j=await fetchCandles(state.iv),{bars,coins}=toBars(j);
-    const ks=Object.keys(bars);if(!ks.length)throw new Error('a Hyperliquid não devolveu velas para ouro, S&P ou EUR/USD');
+    const long=state.src==='long'&&state.iv!=='15m';
+    const j=long?await fetchBinance(state.iv):await fetchCandles(state.iv),{bars,coins}=toBars(j);
+    const ks=Object.keys(bars);if(!ks.length)throw new Error('não vieram velas para ouro, S&P ou EUR/USD');
     const from=Math.min(...ks.map(k=>bars[k][0].t)),to=Math.max(...ks.map(k=>bars[k][bars[k].length-1].t));
     let fund={funding:{},cover:{}};
-    try{state.msg='a descarregar o histórico de funding…';render();fund=await fetchFunding(Object.fromEntries(ks.map(k=>[k,coins[k]])),from,to)}catch(e){}
-    state.msg='a simular 3 estratégias × 2 tipos de ordem…';render();await new Promise(r=>setTimeout(r,30));
+    if(!long)try{state.msg='a descarregar o histórico de funding…';render();fund=await fetchFunding(Object.fromEntries(ks.map(k=>[k,coins[k]])),from,to)}catch(e){}
+    const nS=Object.keys(DSTRAT.PRESETS).length;
+    state.msg=`a simular ${nS} estratégias × 2 tipos de ordem${long?' sobre anos de velas (pode demorar uns segundos)':''}…`;render();await new Promise(r=>setTimeout(r,30));
     const all=BT.runAll(bars,MACRO.CFG,{funding:fund.funding,base:MACRO.BASE});
-    state.res={all,coins,iv:state.iv,cover:fund.cover,missing:['GOLD','SPX','EURUSD'].filter(k=>!bars[k])};state.err='';
+    state.res={all,coins,iv:state.iv,long,cover:fund.cover,missing:(long?['GOLD','EURUSD']:['GOLD','SPX','EURUSD']).filter(k=>!bars[k])};state.err='';
     const X=all.research;if(X.pass)approve(X.best,state.iv);
   }catch(e){state.err=e.message}
   state.busy=false;state.msg='';render();
@@ -115,7 +145,7 @@ function verdict(s){
   if(s.pf!=null&&s.pf!==Infinity&&s.pf<1.2)v.push(`Fator de lucro ${s.pf.toFixed(2)}: margem pequena; basta um pouco de azar ou de escorregamento para virar prejuízo.`);
   if(s.firstHalt)v.push(`A proteção de -20% disparou a ${dt(s.firstHalt.t)}, com a conta em $${s.firstHalt.equity.toFixed(0)}. Este teste retoma sozinho no dia seguinte; na prática ficarias parado até tocares em RETOMAR, por isso a perda real não passaria muito de ${pct(s.firstHalt.equity/MACRO.CFG.start-1)}.`);
   if(s.maxDD>0.15)v.push(`A pior queda foi de ${(s.maxDD*100).toFixed(1)}%: perto do limite de paragem de 20%.`);
-  v.push(`Uma janela curta e um só regime de mercado. ${state.res&&Object.keys(state.res.cover||{}).length?'Inclui funding.':'Sem funding (não foi possível descarregá-lo).'} Sem escorregamento além do custo fixo. Resultado passado não garante o futuro.`);
+  v.push(`${state.res&&state.res.long?'Vários anos e regimes de mercado, mas em proxies (PAXG e EURUSDT).':'Uma janela curta e um só regime de mercado.'} ${state.res&&state.res.long?'Dados spot da Binance: sem funding.':state.res&&Object.keys(state.res.cover||{}).length?'Inclui funding.':'Sem funding (não foi possível descarregá-lo).'} Sem escorregamento além do custo fixo. Resultado passado não garante o futuro.`);
   return v;
 }
 function spark(arr){
@@ -167,7 +197,7 @@ function resHtml(){
   const bh=Object.entries(s.bh).map(([k,v])=>`${names[k]||k} ${pct(v)}`).join(' · ');
   const vars=R.all.variants.map(x=>`<tr><td>${esc(x.label)}</td><td>${x.s.n}</td><td class="${x.s.net>=0?'up':'dn'}">${pct(x.s.netPct)}</td><td>${x.s.pf==null?'—':x.s.pf===Infinity?'∞':x.s.pf.toFixed(2)}</td><td>${(x.s.maxDD*100).toFixed(1)}%</td></tr>`).join('');
   const cov=Object.entries(R.cover||{}).map(([k,v])=>`${names[k]||k} ${Math.round(v*100)}%`).join(' · ');
-  return`<div class="rs"><h4>RESULTADO · ${esc(P_(s.strategy).short.toUpperCase())}<small>${({'15m':'velas de 15 min','1h':'velas de 1 h','4h':'velas de 4 h'})[R.iv]} · ${s.days.toFixed(0)} dias</small></h4>
+  return`<div class="rs"><h4>RESULTADO · ${esc(P_(s.strategy).short.toUpperCase())}<small>${({'15m':'velas de 15 min','1h':'velas de 1 h','4h':'velas de 4 h'})[R.iv]} · ${s.days.toFixed(0)} dias${R.long?' · Binance':''}</small></h4>
     ${row('Período',`${dt(s.from)} → ${dt(s.to)}`)}
     ${row('Trades',`${s.n} · ${s.wins}W ${s.losses}L`)}
     ${row('Taxa de acerto',s.winRate==null?'—':(s.winRate*100).toFixed(0)+'%')}
@@ -199,8 +229,10 @@ function render(){
   const el=$b('btBody');if(!el)return;
   if(DEMO||!api()){el.innerHTML='<div class="note">Indisponível no modo demo ou sem o endereço do worker.</div>';return}
   const sel=Object.entries(IV).map(([k,v])=>`<option value="${k}" ${state.iv===k?'selected':''}>${v.label}</option>`).join('');
-  el.innerHTML=`<div class="note">Corre as <b>mesmas regras do Macro Desk</b> (mesmo risco, alavancagem, custos de 9 bps e paragens de -20% e -5%) sobre velas reais passadas de ouro, S&amp;P 500 e EUR/USD da Hyperliquid, com o funding real. Depois compara 3 estratégias (rompimento, reversão à média, tendência lenta) com ordens a mercado e limitadas, num teste em duas partes. Não envia ordens nem gasta nada. A Hyperliquid só guarda as últimas 5000 velas por mercado.</div>
+  el.innerHTML=`<div class="note">Corre as <b>mesmas regras do Macro Desk</b> (mesmo risco, alavancagem, custos de 9 bps e paragens de -20% e -5%) sobre velas reais passadas de ouro, S&amp;P 500 e EUR/USD da Hyperliquid, com o funding real. Depois compara ${Object.keys(DSTRAT.PRESETS).length} estratégias (${Object.values(DSTRAT.PRESETS).map(p=>p.short).join(', ')}) com ordens a mercado e limitadas, num teste em duas partes. Não envia ordens nem gasta nada. A Hyperliquid só guarda as últimas 5000 velas por mercado.</div>
     ${token()?'':`<div class="pmbar"><input id="btTok" type="password" autocomplete="off" placeholder="token do worker (APP_TOKEN)"></div>`}
+    <div class="pmbar"><select id="btSrc">${Object.entries(SRC).map(([k,v])=>`<option value="${k}" ${state.src===k?'selected':''}>${v.label}</option>`).join('')}</select></div>
+    ${state.src==='long'?`<div class="note">Histórico longo: velas spot da Binance desde 2020 (ouro = PAXG, EUR/USD = EURUSDT), só em 1 h e 4 h. Dá muitas mais trades para a 2.ª parte e por isso um veredicto mais fiável. Não tem S&amp;P 500 nem funding; os custos são os mesmos (9 bps).${state.iv==='15m'?' <b>Em 15 min usa a Hyperliquid.</b>':''}</div>`:''}
     <div class="pmbar"><select id="btIv">${sel}</select><button class="ghost" id="btRun" ${state.busy?'disabled':''}>${state.busy?'A CORRER…':'CORRER TESTE'}</button></div>
     <div class="note">${esc(IV[state.iv].note)}</div>
     ${state.msg?`<div class="note">${esc(state.msg)}</div>`:''}${state.err?`<div class="halt">⚠ ${esc(state.err)}</div>`:''}${resHtml()}`;
@@ -216,7 +248,7 @@ function bind(){
       if(!confirm(`Mudar o Macro Desk (papel) para ${P_(s).label} em velas de ${iv}? A página recarrega e as posições abertas mantêm-se até ao stop, alvo ou tempo.${hl?' ATENÇÃO: a Hyperliquid LIVE está ligada e passa a seguir esta estratégia.':''}`))return;
       if(MACRO.setStrategy(s,iv))location.reload()}
   });
-  el.addEventListener('change',e=>{if(e.target.id==='btIv'){state.iv=e.target.value;render()}});
+  el.addEventListener('change',e=>{if(e.target.id==='btIv'){state.iv=e.target.value;render()}if(e.target.id==='btSrc'){state.src=e.target.value;render()}});
   render();
 }
 window.BTUI={run,state:()=>state,approvals};

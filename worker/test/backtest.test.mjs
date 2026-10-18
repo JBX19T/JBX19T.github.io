@@ -130,7 +130,7 @@ console.log('backtest ok');
   const a = BT.simulate(data, liveCfg, { to: mid }), b = BT.simulate(data, liveCfg, { from: mid });
   assert.ok(a.trades.every(t => t.o < mid && t.c < mid), 'parte A só antes'); assert.ok(b.trades.every(t => t.o >= mid), 'parte B só depois');
   const R = BT.research(data, liveCfg);
-  assert.equal(R.rows.length, 8); assert.equal(R.split, data.GOLD[1800].t);
+  assert.equal(R.rows.length, 10); assert.equal(R.split, data.GOLD[1800].t);
   if (R.best) { const cands = R.rows.filter(r => r.A.n >= R.minA); assert.ok(cands.every(r => r.A.avgR <= R.best.A.avgR), 'escolhida só pela parte A'); }
   console.log('ok   13 duas partes:', R.rows.map(r => r.strategy + '/' + r.exec + ' A' + r.A.n + ' B' + r.B.n).join(' | '), '· aprovada:', R.pass);
 }
@@ -184,4 +184,16 @@ console.log('backtest ok');
   for (const bad of [{ n: 29 }, { avgR: 0 }, { pf: 1.1 }, { tR: 1.9 }, { at: now + 36e5 }]) assert.equal(DS.approvalOk({ ...a, ...bad }, 'trail', '4h', now), false, JSON.stringify(bad));
   assert.equal(DS.approvalOk(null, 'trail', '4h', now), false);
   console.log('ok   17 trava: só a estratégia e as velas aprovadas, com os números exigidos, durante 45 dias');
+}
+// 18) RSI 2 dentro da tendência: compra uma queda curta numa tendência de alta, nunca contra a tendência
+{
+  const s = DS.withStrategy({ ...DS.DEFAULTS, minATRpct: 0 }, 'pullback'), st = DS.make(s);
+  const up = Array.from({ length: 150 }, (_, i) => { const c = 100 + i * 0.3 + Math.sin(i / 3); return { t: T0 + i * 36e5, o: c, h: c + .5, l: c - .5, c }; });
+  const dip = [...up, ...[-1.5, -1.5, -1.5].map((d, j) => { const c = up[149].c + d * (j + 1); return { t: T0 + (150 + j) * 36e5, o: c, h: c + .3, l: c - .3, c }; })];
+  assert.equal(st.signal(dip).dir, 'long');
+  const down = dip.map(b => ({ ...b, o: 300 - b.o, h: 300 - b.l, l: 300 - b.h, c: 300 - b.c }));
+  assert.equal(st.signal(down).dir, 'short', 'espelho: subida curta em tendência de baixa');
+  const crash = Array.from({ length: 150 }, (_, i) => { const c = 200 - i * 0.3; return { t: T0 + i * 36e5, o: c, h: c + .5, l: c - .5, c }; }).concat([{ t: T0 + 150 * 36e5, o: 155, h: 155, l: 150, c: 150 }]);
+  assert.notEqual(st.signal(crash).dir, 'long', 'queda em tendência de baixa não é compra');
+  console.log('ok   18 RSI 2: compra a queda na alta, vende a subida na baixa, não compra contra a tendência');
 }

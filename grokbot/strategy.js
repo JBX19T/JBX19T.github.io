@@ -5,7 +5,9 @@
               reversion = reversão à média: aposta no regresso à média depois de um afastamento de 2 desvios-padrão
               trend     = tendência lenta: cruzamento de EMAs 20/100 com stops largos
               trail     = tendência com stop móvel: rompimento de 40 velas a favor da EMA 20/100, sem alvo fixo; o stop
-                          acompanha o preço a 3×ATR do melhor preço desde a entrada (deixa correr os ganhos, corta as perdas) */
+                          acompanha o preço a 3×ATR do melhor preço desde a entrada (deixa correr os ganhos, corta as perdas)
+              pullback  = compra nas quedas dentro da tendência: tendência de alta (preço e EMA 20 acima da EMA 100) e RSI de 2
+                          períodos abaixo de 10 -> long; o inverso -> short. Alvo curto, saída rápida (estilo Connors) */
 (function(root){
 /* parâmetros comuns (os mesmos do Macro Desk e do piloto automático do worker) */
 const DEFAULTS={riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:9,maxATRpct:.03};
@@ -14,6 +16,7 @@ const PRESETS={
   reversion:{label:'Reversão à média',short:'reversão',p:{bandN:20,band:2,stopATR:2,tpATR:2}},
   trend:{label:'Tendência lenta',short:'tendência',p:{fast:20,slow:100,stopATR:3,tpATR:6,maxHoldBars:192}},
   trail:{label:'Tendência com stop móvel',short:'stop móvel',p:{fast:20,slow:100,brk:40,stopATR:3,tpATR:0,trailATR:3,maxHoldBars:400}},
+  pullback:{label:'Queda dentro da tendência (RSI 2)',short:'RSI 2',p:{fast:20,slow:100,stopATR:2,tpATR:1.5,maxHoldBars:12}},
 };
 /* devolve a configuração com os parâmetros próprios da estratégia escolhida */
 function withStrategy(cfg,name){
@@ -62,7 +65,19 @@ function make(CFG,nMarkets=3){
     if(f<s&&fp>=sp)return{dir:'short',why:`EMA ${CFG.fast} cruza abaixo da ${CFG.slow}`,atr:a};
     return{dir:'flat',why:f>s?'alta, sem cruzamento novo':'baixa, sem cruzamento novo',atr:a};
   };
-  const signal={breakout,reversion,trend,trail:breakout}[kind];
+  /* RSI de Wilder com n períodos (0..100) */
+  const rsi=(c,n)=>{if(c.length<n+1)return null;let g=0,l=0;for(let i=1;i<=n;i++){const d=c[i]-c[i-1];if(d>0)g+=d;else l-=d}g/=n;l/=n;
+    for(let i=n+1;i<c.length;i++){const d=c[i]-c[i-1];g=(g*(n-1)+Math.max(d,0))/n;l=(l*(n-1)+Math.max(-d,0))/n}return l===0?100:100-100/(1+g/l)};
+  const pullback=bars=>{
+    const need=Math.max(CFG.slow,CFG.atrN+1)+2;
+    if(bars.length<need)return{dir:'wait',why:`velas ${bars.length}/${need}`};
+    const c=bars.map(b=>b.c),last=bars[bars.length-1],a=atr(bars,CFG.atrN),f=ema(c,CFG.fast),s=ema(c,CFG.slow),r=rsi(c.slice(-60),2);
+    const vf=volFilter(a,last.c);if(vf)return{dir:'flat',why:vf,atr:a};
+    if(last.c>s&&f>s&&r<10)return{dir:'long',why:`queda em tendência de alta (RSI2 ${r.toFixed(0)})`,atr:a};
+    if(last.c<s&&f<s&&r>90)return{dir:'short',why:`subida em tendência de baixa (RSI2 ${r.toFixed(0)})`,atr:a};
+    return{dir:'flat',why:`RSI2 ${r.toFixed(0)}, ${f>s?'alta':'baixa'}`,atr:a};
+  };
+  const signal={breakout,reversion,trend,trail:breakout,pullback}[kind];
   /* stop móvel: devolve o novo stop depois de uma vela (só aperta, nunca alarga). p = {side, stop, best, atr} */
   const trailStop=(p,bar)=>{
     if(!(CFG.trailATR>0)||!(p.atr>0))return p.stop;
@@ -73,7 +88,7 @@ function make(CFG,nMarkets=3){
   const cost=()=>CFG.costBps/1e4;
   const sizeFor=(eq,entry,stopDist)=>{const riskUsd=eq*CFG.riskPct,n=riskUsd/(stopDist/entry);return Math.min(n,eq*CFG.maxLev/nMarkets)};
   const hasTarget=CFG.tpATR>0;
-  return{ema,atr,signal,cost,sizeFor,kind,trailStop,hasTarget};
+  return{ema,atr,rsi,signal,cost,sizeFor,kind,trailStop,hasTarget};
 }
 /* trava do dinheiro real: só se opera a sério uma estratégia (e tamanho de velas) que passou o teste em duas partes
    há menos de 45 dias. Mesmas exigências do teste: 30+ trades na 2.ª parte, ganho médio > 0, fator de lucro > 1,1, t >= 2. */
