@@ -83,3 +83,5 @@ console.log('TUDO OK');
   let n=0; const f2=async(u,o)=>{ const b=JSON.parse(o.body); if(u.endsWith('/info')&&b.type==='clearinghouseState'&&++n===2) S.positions.push({coin:'xyz:GOLD',szi:0.0024}); return f(u,o); };
   const hl2=makeHL(env({HL_LIVE:'1'}),f2); const r=await hl2.sync(want);
   assert.equal(ex(S).length,0); assert.match(JSON.stringify(r.results[0].detail),/já existe/); console.log('ok   15 corrida entre duas sincronizações: não duplica'); }
+// 16 sem HL_ACCOUNT: erro claro em vez de pedir à Hyperliquid
+{ const {S,f}=sim(); const hl=makeHL({HL_AGENT_KEY:AGENT},f); await assert.rejects(()=>hl.sync(want),/HL_ACCOUNT em falta/); console.log('ok   16 sem HL_ACCOUNT -> erro claro'); const st=await hl.state(); assert.equal(st.markets.GOLD.coin,'xyz:GOLD'); assert.ok(st.agentAddress); console.log('ok   16b o estado mostra os mercados mesmo sem conta'); }

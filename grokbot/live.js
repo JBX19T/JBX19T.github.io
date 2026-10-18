@@ -54,8 +54,10 @@ async function sync(k){
   P[k].busy=true;
   try{
     const want=k==='hl'?hlDesired():solDesired();P[k].sig=JSON.stringify(want);
-    P[k].last=await call('POST',`/${k}/sync`,{desired:want});P[k].err='';remember(k,P[k].last);
-    P[k].st=await call('GET',`/${k}/state`);P[k].at=Date.now();
+    P[k].err='';
+    try{P[k].st=await call('GET',`/${k}/state`)}catch(e){P[k].err=e.message}   // o estado (mercados, saldo) mostra-se mesmo que a sincronização falhe
+    try{P[k].last=await call('POST',`/${k}/sync`,{desired:want});remember(k,P[k].last);P[k].st=await call('GET',`/${k}/state`).catch(()=>P[k].st)}catch(e){P[k].err=e.message}
+    P[k].at=Date.now();
   }catch(e){P[k].err=e.message}
   P[k].busy=false;render(k);
 }
