@@ -5,7 +5,7 @@
 const LT='https://mainnet.zklighter.elliot.ai';
 const DEMO=new URLSearchParams(location.search).has('demo');
 const CFG={start:10000,riskPct:.01,maxLev:2,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:2,ddStop:.20,dayLoss:.05,
-  res:'15m',resMs:15*60e3,minATRpct:.0001,maxATRpct:.03,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
+  res:'15m',resMs:15*60e3,minATRpct:.0005,maxATRpct:.03,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
 /* Lighter negoceia estes ativos como perpétuos: o ouro via PAXG (token lastreado a ouro) e o S&P via SPY (ETF) — são proxies. */
 const MK=[
   {key:'GOLD',  label:'OURO',    note:'PAXG',  match:[/^PAXG$/i,/^XAU/i,/^GOLD$/i],dec:2,sim:[4150,.0009]},

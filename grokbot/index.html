@@ -275,6 +275,7 @@ async function getToken(){
   for(let tries=0;;tries++){
     if(!queue.length){refill();await sleep(1500);if(!queue.length&&tries>3){S.cur=null;status('A AGUARDAR DADOS…',false);await sleep(8000)}continue}
     const t=queue.shift();if(queue.length<5)refill();
+    if(!S.cur)status('DEXSCREENER · LIVE',true);
     await loadCandles(t);return t;
   }
 }
