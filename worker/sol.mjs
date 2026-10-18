@@ -4,6 +4,7 @@
 //   Variáveis:  SOL_LIVE=1 só então assina e envia; sem isto só calcula o plano e pede cotações (simulação)
 //               SOL_PAUSED=1 bloqueia compras (só vende)
 //   Limites:    SOL_TICKET_USD (2)  SOL_MAX_TICKET_USD (5, teto)  SOL_MAX_OPEN (3)  SOL_SLIPPAGE_BPS (300, máx 1000)  JUP_BASE
+//               impacto no preço: compras até 5%; vendas até SOL_SELL_MAX_IMPACT (20%) — sair de uma memecoin a cair vale mais do que ficar preso nela
 // Só assina swaps USDC <-> token construídos pela Jupiter a partir de uma cotação nossa. Nunca envia tokens ou SOL para outro endereço.
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -91,14 +92,15 @@ export function makeSol(env, f = fetch) {
     return { address: addr, mode: live ? 'real' : 'simulacao', paused: env.SOL_PAUSED === '1', sol: (bal.value ?? bal) / 1e9, usdc, tokens, ticket, maxOpen, slippageBps: slip };
   }
 
-  async function quote(inputMint, outputMint, amount) {
+  const sellImpact = Math.min(Math.max(num(env.SOL_SELL_MAX_IMPACT, 20), 1), 50);
+  async function quote(inputMint, outputMint, amount, maxImpact = 5) {
     const u = `${JUP}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slip}&restrictIntermediateTokens=true`;
     const r = await f(u, { headers: jh() });
     if (!r.ok) throw new Error(`jupiter quote ${r.status}`);
     const q = await r.json();
     if (!q || q.error || !q.outAmount) throw new Error('sem rota: ' + ((q && q.error) || 'cotação vazia'));
     if (q.inputMint !== inputMint || q.outputMint !== outputMint) throw new Error('cotação não corresponde ao pedido: recusada');
-    if (parseFloat(q.priceImpactPct || 0) * 100 > 5) throw new Error(`impacto no preço de ${(parseFloat(q.priceImpactPct) * 100).toFixed(1)}%: recusado`);
+    if (parseFloat(q.priceImpactPct || 0) * 100 > maxImpact) throw new Error(`impacto no preço de ${(parseFloat(q.priceImpactPct) * 100).toFixed(1)}%: recusado`);
     return q;
   }
 
@@ -120,7 +122,7 @@ export function makeSol(env, f = fetch) {
 
   async function exec(op, mint, inMint, outMint, amount, extra, res) {
     try {
-      const q = await quote(inMint, outMint, amount);
+      const q = await quote(inMint, outMint, amount, op === 'sell' ? sellImpact : 5);
       const quoteInfo = { inAmount: q.inAmount, outAmount: q.outAmount, priceImpactPct: q.priceImpactPct };
       if (!live) { res.results.push({ op, mint, ok: true, simulated: true, quote: quoteInfo, ...extra }); return; }
       const signature = await swap(q);
@@ -128,7 +130,8 @@ export function makeSol(env, f = fetch) {
     } catch (e) { res.results.push({ op, mint, ok: false, error: String(e.message || e), ...extra }); }
   }
 
-  async function sync(desired = [], { sellAll = false } = {}) {
+  // blocked: { mint: até quando (ms) } — memecoins vendidas pela proteção do servidor não se voltam a comprar logo
+  async function sync(desired = [], { sellAll = false, blocked = {}, now = Date.now() } = {}) {
     const res = { mode: live ? 'real' : 'simulacao', plan: [], results: [], skipped: [] };
     const want = [];
     for (const m of desired || []) { if (validMint(m)) { if (m !== USDC && m !== WSOL && !want.includes(m)) want.push(m); } else res.skipped.push({ mint: String(m).slice(0, 12), reason: 'mint inválido' }); }
@@ -145,6 +148,7 @@ export function makeSol(env, f = fetch) {
     let open = [...held.keys()].length, usdc = st.usdc;
     for (const m of want) {
       if (held.has(m)) continue;
+      if (blocked[m] && blocked[m] > now) { res.skipped.push({ mint: m, reason: 'vendida pela proteção do servidor; bloqueada até ' + new Date(blocked[m]).toISOString().slice(11, 16) + ' UTC' }); continue; }
       if (env.SOL_PAUSED === '1') { res.skipped.push({ mint: m, reason: 'pausado (SOL_PAUSED)' }); continue; }
       if (open >= maxOpen) { res.skipped.push({ mint: m, reason: `máximo de ${maxOpen} posições` }); continue; }
       if (usdc < ticket) { res.skipped.push({ mint: m, reason: `USDC insuficiente ($${usdc.toFixed(2)} < $${ticket})` }); continue; }
@@ -157,6 +161,20 @@ export function makeSol(env, f = fetch) {
     return res;
   }
 
+  // valor atual em USDC de uma quantidade de token (cotação de venda na Jupiter); null se não houver rota
+  async function valueOf(mint, rawAmount) {
+    try { const q = await quote(mint, USDC, rawAmount, 100); return parseInt(q.outAmount, 10) / 1e6; } catch (e) { return null; }
+  }
+  // vende uma só memecoin (usado pela proteção do servidor)
+  async function sellOne(mint, st = null) {
+    st ??= await state();
+    const res = { mode: live ? 'real' : 'simulacao', plan: [], results: [], skipped: [] };
+    const t = st.tokens.find(x => x.mint === mint);
+    if (!t) { res.skipped.push({ mint, reason: 'já não está na carteira' }); return res; }
+    res.plan.push({ op: 'sell', mint, amount: t.amount });
+    await exec('sell', mint, mint, USDC, t.rawAmount, { amount: t.amount }, res);
+    return res;
+  }
   const flatten = () => sync([], { sellAll: true });
-  return { state, sync, flatten, address, live, ticket, maxOpen };
+  return { state, sync, flatten, address, live, ticket, maxOpen, valueOf, sellOne };
 }

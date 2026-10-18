@@ -4,8 +4,15 @@
 // /hl/*   ->  Hyperliquid (hl.mjs): GET /hl/state, POST /hl/sync {desired}, POST /hl/flatten   (ouro, S&P 500, EUR/USD)
 // /sol/*  ->  Solana/Jupiter (sol.mjs): GET /sol/state, POST /sol/sync {desired:[mints]}, POST /sol/flatten   (memecoins)
 //             ambos: simulação por omissão; só enviam ordens com HL_LIVE=1 / SOL_LIVE=1; exigem o cabeçalho X-Token = APP_TOKEN
+// POST /hl/resume   retoma depois de uma paragem da proteção do servidor     POST /notify/test   envia uma notificação de teste
+// cron (a cada 5 min): proteção do servidor (guard.mjs) e, se ligado, piloto automático (autopilot.mjs)
 import { makeHL } from './hl.mjs';
 import { makeSol } from './sol.mjs';
+import { makeStore } from './store.mjs';
+import { makeNotify, describe } from './notify.mjs';
+import { runGuard, guardCfg, totalEquity } from './guard.mjs';
+import { runAutopilot, autopilotCfg } from './autopilot.mjs';
+export { Guard } from './store.mjs';
 const B58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SYSTEM = '11111111111111111111111111111111';
 // Donos conhecidos de pools/curvas (não são carteiras de investidores): Raydium AMM v4 e CPMM, pump.fun curve/AMM
@@ -73,6 +80,25 @@ export async function analyze(mint, rpc) {
   };
 }
 
+// uma volta do cron: proteção primeiro (pode parar tudo), depois o piloto automático (se ligado)
+export async function tick(env, { now = Date.now() } = {}) {
+  const store = makeStore(env);
+  if (!store) return { error: 'sem memória (ligação GUARD em falta no wrangler.toml)' };
+  const notify = makeNotify(env);
+  const hl = env.HL_AGENT_KEY && env.HL_ACCOUNT ? makeHL(env) : null, sol = env.SOL_KEY ? makeSol(env) : null;
+  const g = await runGuard({ env, hl, sol, store, notify, now });
+  let ap = null;
+  if (hl && !g.hl.error) {
+    try {
+      ap = await runAutopilot({ env, hl, store, notify, now, st: g.hl.action ? null : g.hl.st, blockOpen: g.hl.halted ? 'parado pela proteção do servidor' : null });
+      const d = ap && ap.res && describe('Hyperliquid (piloto automático)', ap.res);
+      if (d) await notify.send(d.title, d.message, d);
+    } catch (e) { ap = { error: String(e.message || e) }; }
+  }
+  if (g.hl) delete g.hl.st;
+  return { guard: g, autopilot: ap };
+}
+
 // comparação de palavras-passe em tempo constante (X-Token)
 function safeEq(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
@@ -82,6 +108,7 @@ function safeEq(a, b) {
 }
 
 export default {
+  async scheduled(event, env, ctx) { ctx.waitUntil(tick(env, { now: event.scheduledTime || Date.now() }).catch(() => {})); },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const origin = req.headers.get('Origin') || '';
@@ -92,25 +119,58 @@ export default {
     };
     const json = (b, s = 200, extra = {}) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json', ...cors, ...extra } });
     if (req.method === 'OPTIONS') return new Response(null, { headers: { ...cors, 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'X-Token, Content-Type' } });
-    if (url.pathname.startsWith('/hl/') || url.pathname.startsWith('/sol/')) {
+    if (url.pathname.startsWith('/hl/') || url.pathname.startsWith('/sol/') || url.pathname.startsWith('/notify/')) {
       if (allowed.length && !allowed.includes(origin)) return json({ error: 'origin not allowed' }, 403);
       if (!env.APP_TOKEN) return json({ error: 'APP_TOKEN em falta no worker' }, 503);
       if (!safeEq(req.headers.get('x-token') || '', env.APP_TOKEN)) return json({ error: 'token inválido' }, 401);
       let body = {};
-      if (req.method === 'POST') { try { body = await req.json(); } catch (e) { return json({ error: 'json inválido' }, 400); } }
+      if (req.method === 'POST') { try { const t = await req.text(); body = t ? JSON.parse(t) : {}; } catch (e) { return json({ error: 'json inválido' }, 400); } }
       try {
-        const route = req.method + ' ' + url.pathname;
+        const route = req.method + ' ' + url.pathname, ns = { 'cache-control': 'no-store' };
+        const store = makeStore(env), notify = makeNotify(env), G = guardCfg(env);
+        const tell = (desk, res) => { const d = describe(desk, res); if (d) ctx.waitUntil(notify.send(d.title, d.message, d)); return res; };
+        const guardInfo = async () => store ? { on: true, last: await store.get('guardLast') } : { on: false };
+        if (route === 'POST /notify/test') return json({ configured: notify.on, sent: await notify.send('DOLLOS · teste', 'As notificações do bot estão a funcionar.', { tags: ['white_check_mark'] }) }, 200, ns);
         if (url.pathname.startsWith('/hl/')) {
-          const hl = makeHL(env);
-          if (route === 'GET /hl/state') return json(await hl.state(), 200, { 'cache-control': 'no-store' });
-          if (route === 'POST /hl/sync') return json(await hl.sync(body.desired || {}), 200, { 'cache-control': 'no-store' });
-          if (route === 'POST /hl/candles') return json(await makeHL({ ...env, HL_NETWORK: 'mainnet', HL_LIVE: '0' }).candles(body.interval, body.days), 200, { 'cache-control': 'no-store' });   // só leitura, sempre na rede real
-          if (route === 'POST /hl/flatten') return json(await hl.flatten(), 200, { 'cache-control': 'no-store' });
-        } else {
-          const sol = makeSol(env);
-          if (route === 'GET /sol/state') return json(await sol.state(), 200, { 'cache-control': 'no-store' });
-          if (route === 'POST /sol/sync') return json(await sol.sync(Array.isArray(body.desired) ? body.desired : []), 200, { 'cache-control': 'no-store' });
-          if (route === 'POST /sol/flatten') return json(await sol.flatten(), 200, { 'cache-control': 'no-store' });
+          const hl = makeHL(env), A = autopilotCfg(env);
+          const hlGuard = async () => (store && (await store.get('hlGuard'))) || { peak: 0, halted: null };
+          if (route === 'GET /hl/state') {
+            const st = await hl.state(), gi = await guardInfo();
+            const ap = A.on && store ? await store.get('autopilot') : null;
+            return json({ ...st, guard: { ...gi, ...(await hlGuard()), dd: G.hlDD }, autopilot: { on: A.on, strategy: A.strategy, label: A.label, interval: A.iv, last: ap && ap.last } }, 200, ns);
+          }
+          if (route === 'POST /hl/sync') {
+            if (A.on) return json({ network: hl.network, mode: hl.live ? 'real' : 'simulacao', autopilot: true, plan: [], results: [], skipped: [{ market: 'todos', reason: 'piloto automático no servidor ligado: é o worker que decide' }] }, 200, ns);
+            const g = await hlGuard();
+            return json(tell('Hyperliquid', await hl.sync(body.desired || {}, { blockOpen: g.halted ? 'parado pela proteção do servidor (toca em RETOMAR)' : null })), 200, ns);
+          }
+          if (route === 'POST /hl/candles') return json(await makeHL({ ...env, HL_NETWORK: 'mainnet', HL_LIVE: '0' }).candles(body.interval, body.days), 200, ns);   // só leitura, sempre na rede real
+          if (route === 'POST /hl/flatten') return json(tell('Hyperliquid', await hl.flatten()), 200, ns);
+          if (route === 'POST /hl/resume') {
+            if (!store) return json({ error: 'sem memória no worker' }, 503);
+            const eq = totalEquity(await hl.state());
+            await store.put('hlGuard', { peak: eq, halted: null });
+            return json({ ok: true, peak: eq }, 200, ns);
+          }
+        } else if (url.pathname.startsWith('/sol/')) {
+          const sol = makeSol(env), now = Date.now();
+          if (route === 'GET /sol/state') {
+            const st = await sol.state(), gi = await guardInfo();
+            const block = store ? (await store.get('solBlock')) || {} : {};
+            return json({ ...st, guard: { ...gi, sl: G.solSL, tp: G.solTP, maxHours: G.solMaxH, staleMin: G.solStaleMin, blocked: Object.keys(block).filter(m => block[m] > now).length } }, 200, ns);
+          }
+          if (route === 'POST /sol/sync') {
+            const blocked = store ? (await store.get('solBlock')) || {} : {};
+            if (store) await store.put('solBeat', now);   // a app está viva
+            const res = await sol.sync(Array.isArray(body.desired) ? body.desired : [], { blocked, now });
+            if (store && res.mode === 'real') {   // guarda a entrada de cada compra real para os stops do servidor
+              const e = (await store.get('solEntries')) || {};
+              for (const x of res.results) if (x.op === 'buy' && x.ok && !x.simulated) e[x.mint] = { t: now, usd: x.usd };
+              await store.put('solEntries', e);
+            }
+            return json(tell('Solana', res), 200, ns);
+          }
+          if (route === 'POST /sol/flatten') return json(tell('Solana', await sol.flatten()), 200, ns);
         }
         return json({ error: 'not found' }, 404);
       } catch (e) { return json({ error: String(e.message || e) }, 502); }

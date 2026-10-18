@@ -7,6 +7,7 @@
 //     HL_PAUSED=1                bloqueia aberturas (só fecha)
 //   Limites:    HL_MAX_ORDER_USD (15)  HL_MAX_GROSS_USD (30)  HL_MIN_ORDER_USD (10)  HL_SLIPPAGE_BPS (50)  HL_LEVERAGE (3)
 //   Mercados:   HL_DEXES (xyz)   HL_MARKETS = {"GOLD":"xyz:GOLD",...} para fixar os nomes exatos
+//   Alvo:       por omissão é uma ordem limitada reduce-only (paga a taxa de maker, mais baixa); HL_TP_TRIGGER=1 volta ao alvo a mercado
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { encode as mpEncode } from '@msgpack/msgpack';
@@ -57,6 +58,7 @@ export const roundSz = (sz, szDecimals) => { const k = 10 ** szDecimals; return 
 export const orderWire = (a, isBuy, px, sz, reduceOnly, t) => ({ a, b: isBuy, p: floatToWire(px), s: floatToWire(sz), r: reduceOnly, t });
 export const ioc = { limit: { tif: 'Ioc' } };
 export const trigger = (triggerPx, tpsl) => ({ trigger: { isMarket: true, triggerPx: floatToWire(triggerPx), tpsl } });
+export const gtc = { limit: { tif: 'Gtc' } };
 
 const MARKET_PATTERNS = {
   GOLD: /^(?:[a-z0-9_-]+:)?(?:XAU|GOLD)(?:[-/]?USD)?$/i,
@@ -147,7 +149,7 @@ export function makeHL(env, f = fetch) {
     out.markets = Object.fromEntries(MARKET_KEYS.map(k => [k, d.resolved[k] ? { coin: d.resolved[k].coin, asset: d.resolved[k].asset, mid: d.resolved[k].mid, maxLeverage: d.resolved[k].maxLeverage } : null]));
     if (ADDR.test(env.HL_ACCOUNT || '')) {
       out.account = {}; out.positions = []; out.openOrders = 0;
-      for (const dx of new Set(Object.values(d.resolved).filter(Boolean).map(c => c.dex))) {
+      for (const dx of new Set(['', ...Object.values(d.resolved).filter(Boolean).map(c => c.dex)])) {   // o principal também (saldo total para a proteção)
         const a = await accountOf(dx);
         out.account[dx || 'main'] = a.equity;
         const mine = new Set(Object.values(d.resolved).filter(Boolean).map(c => c.coin));
@@ -161,7 +163,8 @@ export function makeHL(env, f = fetch) {
   const slipPx = (mid, isBuy, sd) => roundPx(mid * (1 + (isBuy ? 1 : -1) * caps.slipBps / 1e4), sd);
 
   // desired: { GOLD:{side:'long'|'short', frac, slPct, tpPct}, ... }  frac = posição / saldo do Macro Desk
-  async function sync(desired = {}, { flattenAll = false } = {}) {
+  // blockOpen: motivo para não abrir nada (ex.: parado pela proteção do servidor)
+  async function sync(desired = {}, { flattenAll = false, blockOpen = null } = {}) {
     const d = await discover();
     const res = { network, mode: live ? 'real' : 'simulacao', plan: [], results: [], skipped: [] };
     const accounts = {};
@@ -195,7 +198,7 @@ export function makeHL(env, f = fetch) {
       }
       // 3) abrir
       if (want && !pos) {
-        if (env.HL_PAUSED === '1') { res.skipped.push({ market: k, reason: 'pausado (HL_PAUSED)' }); continue; }
+        if (env.HL_PAUSED === '1' || blockOpen) { res.skipped.push({ market: k, reason: blockOpen || 'pausado (HL_PAUSED)' }); continue; }
         const equityNow = (a.equity > 0 ? a.equity : (await acct('')).equity);
         const lev = Math.min(caps.leverage, c.maxLeverage || caps.leverage);
         let usd = Math.min(want.frac * equityNow, caps.maxOrder, equityNow * lev * 0.9);
@@ -217,7 +220,8 @@ export function makeHL(env, f = fetch) {
           const s0 = statuses(r) && statuses(r)[0];
           if (!(s0 && s0.filled)) { res.results.push({ op: 'open', market: k, ok: false, detail: s0 || r }); continue; }
           const fsz = parseFloat(s0.filled.totalSz);
-          const prot = await post({ type: 'order', orders: [orderWire(c.asset, !isBuy, sl, fsz, true, trigger(sl, 'sl')), orderWire(c.asset, !isBuy, tp, fsz, true, trigger(tp, 'tp'))], grouping: 'na' });
+          const tpOrder = env.HL_TP_TRIGGER === '1' ? trigger(tp, 'tp') : gtc;   // alvo como ordem limitada: fica no livro e paga taxa de maker
+          const prot = await post({ type: 'order', orders: [orderWire(c.asset, !isBuy, sl, fsz, true, trigger(sl, 'sl')), orderWire(c.asset, !isBuy, tp, fsz, true, tpOrder)], grouping: 'na' });
           const ps = statuses(prot);
           if (!ps || ps.some(x => x.error)) {   // sem stop não há posição: fecha logo
             const cpx = slipPx(c.mid, !isBuy, c.szDecimals);

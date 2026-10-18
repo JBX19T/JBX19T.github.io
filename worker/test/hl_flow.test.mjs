@@ -18,7 +18,7 @@ function sim({equity=100, mid=4000, failStop=false, positions=[], orders=[], fil
       if(a.type==='cancel'){S.orders=S.orders.filter(x=>!a.cancels.some(c=>c.o===x.oid));return R({status:'ok',response:{type:'cancel',data:{statuses:a.cancels.map(()=>'success')}}})}
       if(a.type==='order'){
         const st=a.orders.map(o=>{
-          if(o.t.trigger){if(failStop)return{error:'Trigger rejeitado'};S.orders.push({coin:'xyz:GOLD',oid:900+S.orders.length,reduceOnly:true});return{resting:{oid:900}}}
+          if(o.t.trigger||(o.r&&o.t.limit&&o.t.limit.tif==='Gtc')){if(failStop)return{error:'Trigger rejeitado'};S.orders.push({coin:'xyz:GOLD',oid:900+S.orders.length,reduceOnly:true});return{resting:{oid:900}}}
           if(!fillOrders)return{error:'sem liquidez'};
           if(o.r){S.positions=S.positions.filter(p=>p.coin!=='xyz:GOLD');return{filled:{totalSz:o.s,avgPx:o.p,oid:1}}}
           S.positions.push({coin:'xyz:GOLD',szi:(o.b?1:-1)*parseFloat(o.s)});return{filled:{totalSz:o.s,avgPx:o.p,oid:1}}});
@@ -42,7 +42,7 @@ let t=0;const ok=(n)=>console.log('ok  ',n,'');
  assert.deepEqual(types,['updateLeverage','order:1','order:2']);
  const entry=ex(S)[1].body.action.orders[0],stops=ex(S)[2].body.action.orders;
  assert.equal(entry.b,true);assert.equal(entry.r,false);assert.equal(entry.t.limit.tif,'Ioc');assert.ok(parseFloat(entry.p)>4000);
- assert.ok(stops.every(s=>s.r===true&&s.b===false&&s.t.trigger.isMarket));assert.deepEqual(stops.map(s=>s.t.trigger.tpsl),['sl','tp']);
+ assert.ok(stops.every(s=>s.r===true&&s.b===false));assert.ok(stops[0].t.trigger.isMarket);assert.equal(stops[0].t.trigger.tpsl,'sl');assert.equal(stops[1].t.limit.tif,'Gtc');
  assert.equal(S.lev.isCross,false);assert.equal(S.lev.leverage,3);assert.equal(r.results.at(-1).ok,true);ok('2 testnet: alavancagem isolada 3x, entrada IOC e stops reduce-only')}
 // 3 abaixo do mínimo ($10)
 {const {S,f}=sim({equity:10});const hl=makeHL(env({HL_LIVE:'1'}),f);const r=await hl.sync(want);
