@@ -46,8 +46,8 @@ function simulate(barsByKey,cfgIn,opts={}){
   const closeAt=(k,px,t,why,fee=taker)=>{const p=pos[k],fees=p.notional*(p.fee+fee),pnl=unreal(p,px)-p.notional*fee-p.fund;cash+=pnl;
     trades.push({k,side:p.side,o:p.o,c:t,en:p.entry,ex:px,nt:p.notional,pnl,why,bars:p.held,risk:p.notional*p.sf,costUsd:fees+p.fund,fees,fund:p.fund});delete pos[k]};
   const flatten=(t,why)=>{for(const k of Object.keys(pos))closeAt(k,last[k],t,why);for(const k of Object.keys(pend))delete pend[k]};
-  const openPos=(k,side,entryPx,fee,o)=>{pos[k]={side,entry:entryPx*(1+side*fee),fee,notional:o.notional,stop:0,tp:0,o:o.t,held:0,sf:o.stopDist/(entryPx*(1+side*fee)),fund:0,fundH:Math.floor(o.t/H)};
-    const p=pos[k];p.stop=p.entry-side*o.stopDist;p.tp=p.entry+side*o.tpDist;return p};
+  const openPos=(k,side,entryPx,fee,o)=>{pos[k]={side,entry:entryPx*(1+side*fee),fee,notional:o.notional,stop:0,tp:null,o:o.t,held:0,sf:o.stopDist/(entryPx*(1+side*fee)),fund:0,fundH:Math.floor(o.t/H),atr:o.atr};
+    const p=pos[k];p.stop=p.entry-side*o.stopDist;if(o.tpDist>0)p.tp=p.entry+side*o.tpDist;p.best=p.entry;return p};
 
   for(const t of timeline){
     if(opts.to!=null&&t>=opts.to)break;
@@ -72,10 +72,11 @@ function simulate(barsByKey,cfgIn,opts={}){
       const long=p.side>0,stopHit=long?b.l<=p.stop:b.h>=p.stop;
       if(p.fresh){p.fresh=false;if(stopHit)closeAt(k,p.stop,t,'stop-loss');continue}
       p.held++;
-      const tpHit=maker?(long?b.h>p.tp:b.l<p.tp):(long?b.h>=p.tp:b.l<=p.tp);
+      const tpHit=p.tp!=null&&(maker?(long?b.h>p.tp:b.l<p.tp):(long?b.h>=p.tp:b.l<=p.tp));
       if(stopHit)closeAt(k,long?Math.min(p.stop,b.o):Math.max(p.stop,b.o),t,'stop-loss');
       else if(tpHit)closeAt(k,maker?p.tp:(long?Math.max(p.tp,b.o):Math.min(p.tp,b.o)),t,'take-profit',maker?makerFee:taker);
       else if(p.held>=cfg.maxHoldBars)closeAt(k,b.c,t,'time-stop');
+      if(pos[k])pos[k].stop=st.trailStop(pos[k],b);   // stop móvel: só vale a partir da vela seguinte
     }
     // 3) proteção de capital (como no desk: -20% desde o máximo fecha tudo; -5% num dia pausa até amanhã)
     let e=eqNow();const dk=new Date(t).toISOString().slice(0,10);
@@ -92,8 +93,8 @@ function simulate(barsByKey,cfgIn,opts={}){
       if(sig.dir!=='long'&&sig.dir!=='short')continue;
       const b=barsByKey[k][i],side=sig.dir==='long'?1:-1,stopDist=cfg.stopATR*sig.atr,tpDist=cfg.tpATR*sig.atr;
       const ref=maker?b.c:b.c*(1+side*taker),notional=st.sizeFor(eqNow(),ref,stopDist);if(!(notional>1))continue;
-      if(maker){pend[k]={side,limit:b.c,notional,stopDist,tpDist,t};orders.placed++}
-      else openPos(k,side,b.c,taker,{notional,stopDist,tpDist,t});
+      if(maker){pend[k]={side,limit:b.c,notional,stopDist,tpDist,t,atr:sig.atr};orders.placed++}
+      else openPos(k,side,b.c,taker,{notional,stopDist,tpDist,t,atr:sig.atr});
     }
     curve.push([t,eqNow()]);
   }
@@ -115,7 +116,7 @@ function summarize(res){
   const rs=rt.map(t=>t.pnl/t.risk),avgR=mean(rs),avgGrossR=mean(rt.map(t=>(t.pnl+t.costUsd)/t.risk));
   const sdR=rs.length>1?Math.sqrt(rs.reduce((s,x)=>s+(x-avgR)**2,0)/(rs.length-1)):null;
   const tR=sdR>0?avgR/(sdR/Math.sqrt(rs.length)):null;   // quantos "erros padrão" a média está acima de zero (2 = dificilmente é sorte)
-  const rStats={avgR,avgGrossR,sdR,tR,costR:avgR==null?null:avgGrossR-avgR,breakEvenWin:res.cfg.stopATR/(res.cfg.stopATR+res.cfg.tpATR)};
+  const rStats={avgR,avgGrossR,sdR,tR,costR:avgR==null?null:avgGrossR-avgR,breakEvenWin:res.cfg.tpATR>0?res.cfg.stopATR/(res.cfg.stopATR+res.cfg.tpATR):null};
   return{...rStats,n,wins:w.length,losses:l.length,winRate:n?w.length/n:null,net,netPct:net/start,finalEquity:final,
     pf:gl>0?gw/gl:(gw>0?Infinity:null),avgWin:w.length?gw/w.length:null,avgLoss:l.length?-gl/l.length:null,exp:n?net/n:null,
     feesUsd:tr.reduce((s,t)=>s+(t.fees||0),0),fundUsd:tr.reduce((s,t)=>s+(t.fund||0),0),

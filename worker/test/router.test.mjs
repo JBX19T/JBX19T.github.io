@@ -8,7 +8,7 @@ globalThis.fetch = async (u, o = {}) => {
     if (b.type === 'meta') return R({ universe: b.dex === 'xyz' ? [{ name: 'xyz:GOLD', szDecimals: 4, maxLeverage: 10 }] : [] });
     if (b.type === 'allMids') return R(b.dex === 'xyz' ? { 'xyz:GOLD': '4000' } : {});
     if (b.type === 'clearinghouseState') return R({ marginSummary: { accountValue: '50' }, assetPositions: [] });
-    if (b.type === 'openOrders') return R([]);
+    if ((b.type === 'openOrders' || b.type === 'frontendOpenOrders')) return R([]);
   }
   throw new Error('fetch inesperado ' + u);
 };
@@ -65,7 +65,7 @@ console.log('alpaca removida ok');
     if (b.type === 'meta') return R({ universe: b.dex === 'xyz' ? [{ name: 'xyz:GOLD', szDecimals: 4, maxLeverage: 10 }] : [] });
     if (b.type === 'allMids') return R(b.dex === 'xyz' ? { 'xyz:GOLD': '4000' } : {});
     if (b.type === 'clearinghouseState') return R({ marginSummary: { accountValue: b.dex === 'xyz' ? equity : '0' }, assetPositions: [] });
-    if (b.type === 'openOrders') return R([]);
+    if ((b.type === 'openOrders' || b.type === 'frontendOpenOrders')) return R([]);
     throw new Error('fetch inesperado ' + u);
   };
   const env2 = { ...env, GUARD: fakeNamespace(), NTFY_TOPIC: 'dollos-teste-123' };
@@ -84,6 +84,11 @@ console.log('alpaca removida ok');
   s = await (await ask('/hl/sync', { method: 'POST', body: { desired: { GOLD: { side: 'long', frac: 0.5 } } }, e: { ...env2, HL_AUTOPILOT: '1' } })).json();
   assert.equal(s.autopilot, true); assert.equal(s.plan.length, 0);
   st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'reversion' } })).json(); assert.equal(st.autopilot.strategy, 'reversion');
+  // aprovação do teste histórico: o worker volta a verificar os números
+  r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 12, avgR: .3, pf: 1.5, tR: 2.5 } }); assert.equal(r.status, 400);
+  r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 40, avgR: .2, pf: 1.3, tR: 2.4, at: 1 } }); assert.equal(r.status, 200);
+  st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'trail', HL_INTERVAL: '4h' } })).json(); assert.equal(st.autopilot.approved, true);
+  st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'trail', HL_INTERVAL: '1h' } })).json(); assert.equal(st.autopilot.approved, false);
   // worker antigo sem memória: tudo continua a funcionar, só a proteção fica desligada
   assert.match((await tick(env)).error, /GUARD/);
   st = await (await ask('/hl/state', { e: env })).json(); assert.equal(st.guard.on, false);

@@ -42,14 +42,14 @@ const fmtPx=(m,v)=>v==null?'—':v.toFixed(m.dec);
 const usd=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 
 /* ===== indicadores e estratégia (puros, testáveis) ===== */
-const {ema,atr,signal,cost,sizeFor}=DSTRAT.make(CFG,MK.length);   // regras em strategy.js, partilhadas com o teste histórico
+const {ema,atr,signal,cost,sizeFor,trailStop,hasTarget}=DSTRAT.make(CFG,MK.length);   // regras em strategy.js, partilhadas com o teste histórico
 function unreal(p,px){return p.side*(px-p.entry)/p.entry*p.notional}
 function equity(){let e=S.cash;for(const k in S.pos){const px=P[k].px;if(px!=null)e+=unreal(S.pos[k],px)}return e}
 function open(m,dir,sig){
   const p=P[m.key],px=p.px,side=dir==='long'?1:-1,entry=px*(1+side*cost()),stopDist=CFG.stopATR*sig.atr;
   const notional=sizeFor(equity(),entry,stopDist);if(!(notional>1))return;
-  S.pos[m.key]={side,entry,notional,stop:entry-side*stopDist,tp:entry+side*CFG.tpATR*sig.atr,opened:Date.now(),held:0,why:sig.why};
-  L('p',`${dir==='long'?'LONG':'SHORT'} ${m.label} ${usd(notional)} @ ${fmtPx(m,entry)} · SL ${fmtPx(m,S.pos[m.key].stop)} · TP ${fmtPx(m,S.pos[m.key].tp)}`);save();
+  S.pos[m.key]={side,entry,notional,stop:entry-side*stopDist,tp:hasTarget?entry+side*CFG.tpATR*sig.atr:null,atr:sig.atr,best:entry,opened:Date.now(),held:0,why:sig.why};
+  L('p',`${dir==='long'?'LONG':'SHORT'} ${m.label} ${usd(notional)} @ ${fmtPx(m,entry)} · SL ${fmtPx(m,S.pos[m.key].stop)} · ${hasTarget?'TP '+fmtPx(m,S.pos[m.key].tp):'stop móvel, sem alvo'}`);save();
 }
 function close(m,why){
   const p=S.pos[m.key],px=P[m.key].px;if(!p||px==null)return;
@@ -60,7 +60,7 @@ function close(m,why){
 function checkExits(m){
   const p=S.pos[m.key],px=P[m.key].px;if(!p||px==null)return;
   if(p.side>0?px<=p.stop:px>=p.stop)return close(m,'stop-loss');
-  if(p.side>0?px>=p.tp:px<=p.tp)return close(m,'take-profit');
+  if(p.tp!=null&&(p.side>0?px>=p.tp:px<=p.tp))return close(m,'take-profit');
   if(p.held>=CFG.maxHoldBars)return close(m,'time-stop');
 }
 const today=()=>new Date().toISOString().slice(0,10);
@@ -79,7 +79,9 @@ function onBar(m){   // corre quando há uma vela nova ou dados novos
   const p=P[m.key];if(p.px==null)return;
   const stale=p.src==='lighter'&&p.bars.length&&Date.now()-p.bars[p.bars.length-1].t>CFG.resMs*4;
   p.sig=stale?{dir:'flat',why:'mercado parado / sem velas novas'}:signal(p.bars);
-  if(S.pos[m.key]){S.pos[m.key].held++;checkExits(m);return}
+  if(S.pos[m.key]){const q=S.pos[m.key];q.held++;checkExits(m);
+    if(S.pos[m.key]&&p.bars.length){q.stop=trailStop(q,p.bars[p.bars.length-1]);save()}   // stop móvel (só na estratégia que o usa)
+    return}
   if((p.sig.dir==='long'||p.sig.dir==='short')&&S.pos[m.key]==null&&!S.halt)open(m,p.sig.dir,p.sig);
 }
 
@@ -162,11 +164,11 @@ function render(){
       <div class="mkr"><span class="${chg>0?'up':chg<0?'dn':''}">${chg!=null?(chg>0?'+':'')+chg.toFixed(2)+'% 24h':'—'}</span>${tag}</div>
       <div class="mkr"><small>${p.err?'⚠ '+p.err:(s.why||'')+(p.src==='ticks'?' · velas locais de 1 min':'')}</small>${upnl!=null?`<span class="${upnl>=0?'up':'dn'}">${upnl>=0?'+':''}${usd(upnl)}</span>`:''}</div></div>`}).join('');
   const rows=MK.filter(m=>S.pos[m.key]).map(m=>{const p=S.pos[m.key],px=P[m.key].px,u=px!=null?unreal(p,px):0;
-    return `<tr><td>${m.label}</td><td>${p.side>0?'LONG':'SHORT'}</td><td>${fmtPx(m,p.entry)}</td><td>${fmtPx(m,px)}</td><td>${fmtPx(m,p.stop)}</td><td>${fmtPx(m,p.tp)}</td><td class="${u>=0?'up':'dn'}">${u>=0?'+':''}${usd(u)}</td><td><button class="ghost" data-k="${m.key}" aria-label="Fechar ${m.label}">✕</button></td></tr>`}).join('');
+    return `<tr><td>${m.label}</td><td>${p.side>0?'LONG':'SHORT'}</td><td>${fmtPx(m,p.entry)}</td><td>${fmtPx(m,px)}</td><td>${fmtPx(m,p.stop)}</td><td>${p.tp==null?'móvel':fmtPx(m,p.tp)}</td><td class="${u>=0?'up':'dn'}">${u>=0?'+':''}${usd(u)}</td><td><button class="ghost" data-k="${m.key}" aria-label="Fechar ${m.label}">✕</button></td></tr>`}).join('');
   body.innerHTML=`${S.halt?`<div class="halt">⛔ <b>PARADO</b> · ${S.halt.msg}. Nenhuma entrada nova. <button class="ghost" id="mkResume">RETOMAR</button></div>`:''}<div class="mkg">${cards}</div>
     <div class="mkacc"><span>Saldo <b>${usd(eq)}</b> <span class="${pnl>=0?'up':'dn'}">(${pnl>=0?'+':''}${(pnl/CFG.start*100).toFixed(2)}%)</span></span><span>${S.wins}W ${S.closed-S.wins}L</span><button class="ghost" id="mkReset">REINICIAR</button></div>
     ${rows?`<table><thead><tr><th>Ativo</th><th></th><th>Entrada</th><th>Preço</th><th>SL</th><th>TP</th><th>P/L</th><th></th></tr></thead><tbody id="mkRows">${rows}</tbody></table>`:`<div class="note">Sem posições abertas. Estratégia: <b>${DSTRAT.PRESETS[CFG.strategy].label}</b> em velas de ${CFG.res}.</div>`}
-    <div class="note">Paper trading: conta fictícia de ${usd(CFG.start)}, risco de 1% por trade, estratégia ${DSTRAT.PRESETS[CFG.strategy].label} (velas de ${CFG.res}), stop ${CFG.stopATR}×ATR, alvo ${CFG.tpATR}×ATR, custo ${CFG.costBps} bps por lado, sem alavancagem acima de ${CFG.maxLev}×. Proteção: se a conta perder ${Math.round(CFG.ddStop*100)}% desde o máximo, fecha tudo e pára; perde ${Math.round(CFG.dayLoss*100)}% num dia, pausa até amanhã (retomar é manual). Ouro e S&P usam proxies do Lighter (PAXG e SPY). O estado fica guardado no telemóvel.</div>`;
+    <div class="note">Paper trading: conta fictícia de ${usd(CFG.start)}, risco de 1% por trade, estratégia ${DSTRAT.PRESETS[CFG.strategy].label} (velas de ${CFG.res}), stop ${CFG.stopATR}×ATR, ${CFG.tpATR>0?`alvo ${CFG.tpATR}×ATR`:`sem alvo, stop móvel a ${CFG.trailATR}×ATR`}, custo ${CFG.costBps} bps por lado, sem alavancagem acima de ${CFG.maxLev}×. Proteção: se a conta perder ${Math.round(CFG.ddStop*100)}% desde o máximo, fecha tudo e pára; perde ${Math.round(CFG.dayLoss*100)}% num dia, pausa até amanhã (retomar é manual). Ouro e S&P usam proxies do Lighter (PAXG e SPY). O estado fica guardado no telemóvel.</div>`;
 }
 function record(){guard();const e=equity();S.hist.push(e);if(S.hist.length>500)S.hist.shift();save()}
 function bind(){

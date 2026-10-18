@@ -136,7 +136,7 @@ export function makeHL(env, f = fetch) {
 
   async function accountOf(dex) {
     if (!ADDR.test(env.HL_ACCOUNT || '')) throw new Error('HL_ACCOUNT em falta ou inválido (endereço 0x… da conta principal da Hyperliquid)');
-    const [st, oo] = await Promise.all([info({ type: 'clearinghouseState', user: env.HL_ACCOUNT, dex }), info({ type: 'openOrders', user: env.HL_ACCOUNT, dex })]);
+    const [st, oo] = await Promise.all([info({ type: 'clearinghouseState', user: env.HL_ACCOUNT, dex }), info({ type: 'frontendOpenOrders', user: env.HL_ACCOUNT, dex })]);
     const positions = (st.assetPositions || []).map(a => a.position).filter(Boolean).map(p => ({ coin: p.coin, szi: parseFloat(p.szi), entryPx: parseFloat(p.entryPx), pnl: parseFloat(p.unrealizedPnl) }));
     return { equity: parseFloat(st.marginSummary && st.marginSummary.accountValue) || 0, positions, orders: oo || [] };
   }
@@ -162,7 +162,8 @@ export function makeHL(env, f = fetch) {
 
   const slipPx = (mid, isBuy, sd) => roundPx(mid * (1 + (isBuy ? 1 : -1) * caps.slipBps / 1e4), sd);
 
-  // desired: { GOLD:{side:'long'|'short', frac, slPct, tpPct}, ... }  frac = posição / saldo do Macro Desk
+  // desired: { GOLD:{side:'long'|'short', frac, slPct, tpPct, slPx}, ... }  frac = posição / saldo do Macro Desk
+  //   tpPct null = sem alvo (estratégia de stop móvel)   slPx = stop atual pedido pelo desk (sobe/desce com o stop móvel)
   // blockOpen: motivo para não abrir nada (ex.: parado pela proteção do servidor)
   async function sync(desired = {}, { flattenAll = false, blockOpen = null } = {}) {
     const d = await discover();
@@ -196,6 +197,34 @@ export function makeHL(env, f = fetch) {
         gross -= sz * c.mid;
         continue;   // a abertura do lado contrário fica para a próxima sincronização
       }
+      // 2b) posição mantida: aperta o stop móvel, ou repõe o stop se faltar (nunca deixa uma posição sem stop)
+      if (pos && want) {
+        const isLong = pos.szi > 0, sz = Math.abs(pos.szi);
+        const sls = myOrders.filter(o => o.isTrigger && /stop/i.test(o.orderType || ''));
+        const cur = sls.length ? parseFloat(sls[0].triggerPx) : null;
+        let target = want.slPx > 0 ? want.slPx : null;
+        if (cur == null && target == null) { const pct = Math.min(Math.max(want.slPct || 0.02, 0.002), 0.2); target = (pos.entryPx || c.mid) * (isLong ? 1 - pct : 1 + pct); }
+        if (target != null) {
+          target = roundPx(target, c.szDecimals);
+          const valid = isLong ? target < c.mid * 0.999 : target > c.mid * 1.001;
+          const tighter = cur == null || (isLong ? target > cur * 1.001 : target < cur * 0.999);
+          if (cur == null && !valid) {   // sem stop e o preço já passou o nível do stop: fecha
+            const px = slipPx(c.mid, !isLong, c.szDecimals);
+            res.plan.push({ op: 'close', market: k, coin: c.coin, side: isLong ? 'sell' : 'buy', sz, px, motivo: 'sem stop e preço além do stop' });
+            if (live) { const r = await post({ type: 'order', orders: [orderWire(c.asset, !isLong, px, sz, true, ioc)], grouping: 'na' }); const s0 = statuses(r) && statuses(r)[0]; res.results.push({ op: 'close', market: k, ok: !!(s0 && s0.filled), detail: s0 || r }); }
+          } else if (valid && tighter) {
+            const op = cur == null ? 'stop' : 'trail';
+            res.plan.push({ op, market: k, coin: c.coin, from: cur, to: target });
+            if (live) {   // primeiro o stop novo, só depois cancela o antigo: nunca fica sem proteção
+              const r = await post({ type: 'order', orders: [orderWire(c.asset, !isLong, target, sz, true, trigger(target, 'sl'))], grouping: 'na' });
+              const s0 = statuses(r) && statuses(r)[0], ok = !!(s0 && !s0.error);
+              if (ok && sls.length) await post({ type: 'cancel', cancels: sls.map(o => ({ a: c.asset, o: o.oid })) });
+              res.results.push({ op, market: k, ok, detail: s0 || r });
+            }
+          }
+        }
+        continue;
+      }
       // 3) abrir
       if (want && !pos) {
         if (env.HL_PAUSED === '1' || blockOpen) { res.skipped.push({ market: k, reason: blockOpen || 'pausado (HL_PAUSED)' }); continue; }
@@ -206,8 +235,9 @@ export function makeHL(env, f = fetch) {
         const isBuy = wantLong, px = slipPx(c.mid, isBuy, c.szDecimals), sz = roundSz(usd / px, c.szDecimals);
         if (!(equityNow > 0)) { res.skipped.push({ market: k, reason: 'sem saldo na conta (transfere USDC para o dex ' + (c.dex || 'main') + ')' }); continue; }
         if (sz * px < caps.minOrder) { res.skipped.push({ market: k, reason: `ordem de $${(sz * px).toFixed(2)} abaixo do mínimo de $${caps.minOrder}` }); continue; }
+        const noTp = want.tpPct === null || want.tpPct === 0;   // estratégia de stop móvel: sem alvo
         const slPct = Math.min(Math.max(want.slPct || 0.01, 0.002), 0.2), tpPct = Math.min(Math.max(want.tpPct || 0.015, 0.002), 0.5);
-        const sl = roundPx(c.mid * (isBuy ? 1 - slPct : 1 + slPct), c.szDecimals), tp = roundPx(c.mid * (isBuy ? 1 + tpPct : 1 - tpPct), c.szDecimals);
+        const sl = roundPx(c.mid * (isBuy ? 1 - slPct : 1 + slPct), c.szDecimals), tp = noTp ? null : roundPx(c.mid * (isBuy ? 1 + tpPct : 1 - tpPct), c.szDecimals);
         res.plan.push({ op: 'open', market: k, coin: c.coin, side: isBuy ? 'buy' : 'sell', sz, px, usd: +(sz * px).toFixed(2), leverage: lev, sl, tp });
         gross += sz * px;
         if (live) {
@@ -221,7 +251,9 @@ export function makeHL(env, f = fetch) {
           if (!(s0 && s0.filled)) { res.results.push({ op: 'open', market: k, ok: false, detail: s0 || r }); continue; }
           const fsz = parseFloat(s0.filled.totalSz);
           const tpOrder = env.HL_TP_TRIGGER === '1' ? trigger(tp, 'tp') : gtc;   // alvo como ordem limitada: fica no livro e paga taxa de maker
-          const prot = await post({ type: 'order', orders: [orderWire(c.asset, !isBuy, sl, fsz, true, trigger(sl, 'sl')), orderWire(c.asset, !isBuy, tp, fsz, true, tpOrder)], grouping: 'na' });
+          const protOrders = [orderWire(c.asset, !isBuy, sl, fsz, true, trigger(sl, 'sl'))];
+          if (tp != null) protOrders.push(orderWire(c.asset, !isBuy, tp, fsz, true, tpOrder));
+          const prot = await post({ type: 'order', orders: protOrders, grouping: 'na' });
           const ps = statuses(prot);
           if (!ps || ps.some(x => x.error)) {   // sem stop não há posição: fecha logo
             const cpx = slipPx(c.mid, !isBuy, c.szDecimals);

@@ -43,7 +43,7 @@ O worker agora usa bibliotecas, por isso já não se cola à mão no Cloudflare:
 | `HL_GUARD_DD` 0.2 | variável | proteção do servidor: queda desde o máximo que fecha tudo na Hyperliquid |
 | `SOL_GUARD_SL` 0.3, `SOL_GUARD_TP` 1, `SOL_GUARD_MAX_HOURS` 6, `SOL_STALE_MIN` 30 | variável | proteção do servidor nas memecoins (0 em `SOL_STALE_MIN` desliga a venda por app parada) |
 | `HL_AUTOPILOT` | variável | `1` liga o piloto automático no servidor (ver ponto 7). Desligado por omissão |
-| `HL_STRATEGY` breakout, `HL_INTERVAL` 15m | variável | estratégia (`breakout`, `reversion`, `trend`) e velas (`15m`, `1h`, `4h`) do piloto |
+| `HL_STRATEGY` breakout, `HL_INTERVAL` 15m | variável | estratégia (`breakout`, `reversion`, `trend`, `trail`) e velas (`15m`, `1h`, `4h`) do piloto |
 | `HL_TP_TRIGGER` | variável | `1` volta ao alvo a mercado (por omissão o alvo é uma ordem limitada, com taxa de maker) |
 
 ### 3. Hyperliquid
@@ -67,6 +67,11 @@ O worker corre sozinho **a cada 5 minutos**, mesmo com a app fechada (cron da Cl
 - **Memecoins:** vende uma memecoin se cair 30% face à entrada, se subir 100%, ou se estiver há mais de 6 h na carteira. Se a app ficar **30 min sem sincronizar** (fechada ou suspensa pelo telemóvel), vende tudo. O que a proteção vende não volta a ser comprado durante 6 h.
 - Em simulação não envia nada: só avisa o que faria.
 - **Notificações no telemóvel:** instala a app **ntfy** (Android ou iPhone, grátis, sem conta) → *+* → subscreve um tópico com um nome comprido e difícil de adivinhar (por ex. `dollos-` + letras e números ao calhas). Guarda o mesmo nome no segredo `NTFY_TOPIC` do worker. No painel, **TESTAR NOTIFICAÇÃO** confirma. Recebes um aviso a cada ordem real, a cada falha e a cada ação da proteção. Quem souber o nome do tópico lê os avisos, por isso trata-o como uma palavra-passe.
+
+### Trava do dinheiro real
+- **Hyperliquid:** a app só envia ordens se a estratégia em uso, com o tamanho de velas em uso, tiver passado o teste em duas partes do TESTE HISTÓRICO há menos de 45 dias. Para passar, a 2.ª parte precisa de 30+ trades, ganho médio > 0, fator de lucro > 1,1 e t ≥ 2. Sem isso, o painel mostra 🔒 e nada é enviado.
+- **Memecoins:** só há compras reais se o desk de memecoins em papel já tiver 30+ trades fechadas, resultado positivo e fator de lucro > 1,1. As vendas continuam sempre.
+- **Piloto automático:** a app envia a aprovação para `POST /hl/approve`, e o worker volta a verificar os números. Sem aprovação válida, o piloto não abre posições novas; só gere as que existem.
 
 ### 7. Piloto automático no servidor (opcional, desligado)
 Com `HL_AUTOPILOT=1`, o próprio worker corre a estratégia (as mesmas regras do desk e do teste histórico, `grokbot/strategy.js`) sobre as velas da Hyperliquid e decide as posições, mesmo com a app fechada. A app deixa de decidir a Hyperliquid e passa a mostrar o que o piloto fez. Continua sujeito a `HL_LIVE`, `HL_NETWORK`, aos limites e à proteção. **Só faz sentido ligá-lo com uma estratégia que tenha passado o teste em duas partes do TESTE HISTÓRICO** e depois de semanas em papel.
