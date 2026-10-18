@@ -89,3 +89,13 @@ console.log('backtest ok');
   const r = BT.simulate({ GOLD: bars }, { ...cfg, ddStop: 0.0005 }); const s = BT.summarize(r);
   assert.ok(s.firstHalt && s.firstHalt.equity < cfg.start); console.log('ok   9 primeira paragem registada: conta $' + s.firstHalt.equity.toFixed(2));
 }
+// 10) métricas em R: o caso à mão vale exatamente 1.5 R; com 9 bps os custos aparecem em R
+{
+  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 101.2, 102.7, 101, 102.5), ...flat(5, 22).map(b => ({ ...b, o: 102.5, h: 102.6, l: 102.4, c: 102.5 }))];
+  const r = BT.simulate({ GOLD: bars }, cfg); const t = r.trades[0];
+  approx(t.risk, 100, 1e-6, 'risco = 1% da conta'); approx(t.pnl / t.risk, 1.5, 1e-9, '1.5 R');
+  const s9 = BT.summarize(BT.simulate({ GOLD: bars }, { ...cfg, costBps: 9 }));
+  assert.ok(s9.costR > 0.1 && s9.costR < 0.3, 'custo em R ' + s9.costR); approx(s9.breakEvenWin, 0.4, 1e-12, 'empate a 40%');
+  approx(s9.avgGrossR - s9.costR, s9.avgR, 1e-12, 'R líquido = bruto - custos');
+  console.log('ok   10 R: caso à mão 1.5 R; custo de 9 bps = ' + s9.costR.toFixed(3) + ' R; empate a 40%');
+}

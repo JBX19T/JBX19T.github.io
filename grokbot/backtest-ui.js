@@ -6,12 +6,12 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 const usd=v=>(v>0?'+$':v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const pct=v=>v==null||!isFinite(v)?'—':(v>=0?'+':'')+(v*100).toFixed(1)+'%';
 const dt=t=>new Date(t).toISOString().slice(0,10);
-const IV={'15m':{label:'15 min · cerca de 50 dias',note:'as mesmas velas do Macro Desk'},'1h':{label:'1 hora · cerca de 7 meses',note:'teste de robustez: a estratégia foi feita para 15 min'}};
+const IV={'15m':{label:'15 min · cerca de 50 dias',note:'as mesmas velas do Macro Desk'},'1h':{label:'1 hora · cerca de 7 meses',note:'teste de robustez: a estratégia foi feita para 15 min'},'4h':{label:'4 horas · até cerca de 2 anos',note:'robustez com velas maiores (o custo pesa menos); o período real pode ser mais curto se o mercado for mais recente'}};
 let state={busy:false,msg:'',err:'',res:null,iv:'15m',coins:null};
 const api=()=>typeof HOLDERS_API==='string'?HOLDERS_API:'';
 const token=()=>window.LIVE&&LIVE.L.token||'';
 
-const HL='https://api.hyperliquid.xyz/info',MS={'15m':9e5,'1h':36e5};
+const HL='https://api.hyperliquid.xyz/info',MS={'15m':9e5,'1h':36e5,'4h':144e5};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const DEFAULT_COINS={GOLD:'xyz:GOLD',SPX:'xyz:SP500',EURUSD:'xyz:EUR'};   // nomes que o painel HYPERLIQUID já mostrou; se o painel os tiver, usa esses
 function knownCoins(){
@@ -40,7 +40,7 @@ async function fetchDirect(iv){
 /* 2.º caminho (plano B): pelo worker */
 async function fetchViaWorker(iv){
   const f=window.CapacitorWebFetch||fetch;
-  const r=await f(api()+'/hl/candles',{method:'POST',headers:{'x-token':token(),'content-type':'application/json'},body:JSON.stringify({interval:iv,days:iv==='15m'?52:210})});
+  const r=await f(api()+'/hl/candles',{method:'POST',headers:{'x-token':token(),'content-type':'application/json'},body:JSON.stringify({interval:iv,days:iv==='15m'?52:iv==='1h'?210:840})});
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;
 }
 async function fetchCandles(iv){
@@ -74,6 +74,11 @@ function verdict(s){
   if(s.n<30)v.push(`Poucas trades (${s.n}): qualquer conclusão é fraca.`);
   if(s.net<=0)v.push(`Com as regras atuais teria <b>perdido ${(Math.abs(s.netPct)*100).toFixed(1)}%</b> neste período.`);
   else v.push(`Com as regras atuais teria <b>ganho ${(s.netPct*100).toFixed(1)}%</b> neste período, já com custos.`);
+  if(s.avgGrossR!=null){
+    if(s.avgGrossR<=0)v.push(`A regra perde <b>mesmo antes de custos</b> (${s.avgGrossR.toFixed(2)} R por trade): o problema é a regra, não os custos.`);
+    else if(s.avgR<=0)v.push(`Antes de custos a regra ganharia ${s.avgGrossR.toFixed(2)} R por trade, mas os custos (${s.costR.toFixed(2)} R) comem tudo: velas maiores ou menos trades podem ajudar.`);
+    else v.push(`Ganha ${s.avgR.toFixed(2)} R por trade já com custos (${s.avgGrossR.toFixed(2)} R antes).`);
+  }
   if(s.pf!=null&&s.pf!==Infinity&&s.pf<1.2)v.push(`Fator de lucro ${s.pf.toFixed(2)}: margem pequena; basta um pouco de azar ou de escorregamento para virar prejuízo.`);
   if(s.firstHalt)v.push(`A proteção de -20% disparou a ${dt(s.firstHalt.t)}, com a conta em $${s.firstHalt.equity.toFixed(0)}. Este teste retoma sozinho no dia seguinte; na prática ficarias parado até tocares em RETOMAR, por isso a perda real não passaria muito de ${pct(s.firstHalt.equity/MACRO.CFG.start-1)}.`);
   if(s.maxDD>0.15)v.push(`A pior queda foi de ${(s.maxDD*100).toFixed(1)}%: perto do limite de paragem de 20%.`);
@@ -93,12 +98,14 @@ function resHtml(){
   const s=R.all.main.s,names={GOLD:'Ouro',SPX:'S&P 500',EURUSD:'EUR/USD'};
   const bh=Object.entries(s.bh).map(([k,v])=>`${names[k]||k} ${pct(v)}`).join(' · ');
   const vars=R.all.variants.map(x=>`<tr><td>${esc(x.label)}</td><td>${x.s.n}</td><td class="${x.s.net>=0?'up':'dn'}">${pct(x.s.netPct)}</td><td>${x.s.pf==null?'—':x.s.pf===Infinity?'∞':x.s.pf.toFixed(2)}</td><td>${(x.s.maxDD*100).toFixed(1)}%</td></tr>`).join('');
-  return`<div class="rs"><h4>RESULTADO<small>${R.iv==='15m'?'velas de 15 min':'velas de 1 h'} · ${s.days.toFixed(0)} dias</small></h4>
+  return`<div class="rs"><h4>RESULTADO<small>${({'15m':'velas de 15 min','1h':'velas de 1 h','4h':'velas de 4 h'})[R.iv]} · ${s.days.toFixed(0)} dias</small></h4>
     ${row('Período',`${dt(s.from)} → ${dt(s.to)}`)}
     ${row('Trades',`${s.n} · ${s.wins}W ${s.losses}L`)}
     ${row('Taxa de acerto',s.winRate==null?'—':(s.winRate*100).toFixed(0)+'%')}
     ${row('Resultado (conta de $10 000)',`<span class="${s.net>=0?'up':'dn'}">${usd(s.net)} (${pct(s.netPct)})</span>`)}
     ${row('Fator de lucro',s.pf==null?'—':s.pf===Infinity?'∞':s.pf.toFixed(2))}
+    ${row('Média por trade em R',s.avgR==null?'—':`${s.avgR.toFixed(2)} R <small>(antes de custos ${s.avgGrossR.toFixed(2)} R · custos ${s.costR.toFixed(2)} R)</small>`)}
+    ${row('Acerto para empatar',`~${Math.round(s.breakEvenWin*100)}% (antes de custos)`)}
     ${row('Ganho / perda média',s.n?`${s.avgWin==null?'—':usd(s.avgWin)} / ${s.avgLoss==null?'—':usd(s.avgLoss)}`:'—')}
     ${row('Pior queda',(s.maxDD*100).toFixed(1)+'%')}
     ${row('Paragens de proteção',`${s.halts.dd} de -20% · ${s.halts.day} diárias`)}

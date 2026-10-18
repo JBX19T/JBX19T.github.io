@@ -25,7 +25,7 @@ function simulate(barsByKey,cfgIn,opts={}){
   const unreal=(p,px)=>p.side*(px-p.entry)/p.entry*p.notional;
   const eqNow=()=>{let e=cash;for(const k in pos)e+=unreal(pos[k],last[k]);return e};
   const closeAt=(k,px,t,why)=>{const p=pos[k],pnl=unreal(p,px)-p.notional*st.cost();cash+=pnl;
-    trades.push({k,side:p.side,o:p.o,c:t,en:p.entry,ex:px,nt:p.notional,pnl,why,bars:p.held});delete pos[k]};
+    trades.push({k,side:p.side,o:p.o,c:t,en:p.entry,ex:px,nt:p.notional,pnl,why,bars:p.held,risk:p.notional*p.sf,costUsd:2*p.notional*st.cost()});delete pos[k]};
   const flatten=(t,why)=>{for(const k of Object.keys(pos))closeAt(k,last[k],t,why)};
 
   for(const t of timeline){
@@ -54,7 +54,7 @@ function simulate(barsByKey,cfgIn,opts={}){
       if(sig.dir!=='long'&&sig.dir!=='short')continue;
       const b=barsByKey[k][i],side=sig.dir==='long'?1:-1,entry=b.c*(1+side*st.cost()),stopDist=cfg.stopATR*sig.atr;
       const notional=st.sizeFor(eqNow(),entry,stopDist);if(!(notional>1))continue;
-      pos[k]={side,entry,notional,stop:entry-side*stopDist,tp:entry+side*cfg.tpATR*sig.atr,o:t,held:0};
+      pos[k]={side,entry,notional,stop:entry-side*stopDist,tp:entry+side*cfg.tpATR*sig.atr,o:t,held:0,sf:stopDist/entry};
     }
     curve.push([t,eqNow()]);
   }
@@ -72,7 +72,11 @@ function summarize(res){
   const group=(f)=>{const o={};for(const t of tr){const g=f(t);(o[g]??={n:0,wins:0,pnl:0});o[g].n++;if(t.pnl>0)o[g].wins++;o[g].pnl+=t.pnl}return o};
   const final=res.finalCash;
   const pts=res.curve.length>140?res.curve.filter((_,i)=>i%Math.ceil(res.curve.length/140)===0):res.curve;
-  return{n,wins:w.length,losses:l.length,winRate:n?w.length/n:null,net,netPct:net/start,finalEquity:final,
+  // em "R" (múltiplos do risco de cada trade): mostra se a regra perde por si ou só por causa dos custos
+  const rt=tr.filter(t=>t.risk>0),mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  const avgR=mean(rt.map(t=>t.pnl/t.risk)),avgGrossR=mean(rt.map(t=>(t.pnl+t.costUsd)/t.risk));
+  const rStats={avgR,avgGrossR,costR:avgR==null?null:avgGrossR-avgR,breakEvenWin:res.cfg.stopATR/(res.cfg.stopATR+res.cfg.tpATR)};
+  return{...rStats,n,wins:w.length,losses:l.length,winRate:n?w.length/n:null,net,netPct:net/start,finalEquity:final,
     pf:gl>0?gw/gl:(gw>0?Infinity:null),avgWin:w.length?gw/w.length:null,avgLoss:l.length?-gl/l.length:null,exp:n?net/n:null,
     maxDD:res.maxDD,halts:res.halts,firstHalt:res.firstHalt,from:res.start,to:res.end,days:res.end&&res.start?(res.end-res.start)/864e5:0,
     byMarket:group(t=>t.k),byReason:group(t=>t.why),byMonth:group(t=>new Date(t.c).toISOString().slice(0,7)),
