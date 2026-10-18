@@ -55,7 +55,8 @@ async function sync(k){
     const want=k==='hl'?hlDesired():solDesired();P[k].sig=JSON.stringify(want);
     P[k].err='';
     try{P[k].st=await call('GET',`/${k}/state`)}catch(e){P[k].err=e.message}   // o estado (mercados, saldo) mostra-se mesmo que a sincronização falhe
-    try{P[k].last=await call('POST',`/${k}/sync`,{desired:want});remember(k,P[k].last);P[k].st=await call('GET',`/${k}/state`).catch(()=>P[k].st)}catch(e){P[k].err=e.message}
+    const auto=k==='hl'&&P.hl.st&&P.hl.st.autopilot&&P.hl.st.autopilot.on;   // piloto automático no servidor: a app só observa
+    if(!auto)try{P[k].last=await call('POST',`/${k}/sync`,{desired:want});remember(k,P[k].last);P[k].st=await call('GET',`/${k}/state`).catch(()=>P[k].st)}catch(e){P[k].err=e.message}
     P[k].at=Date.now();
   }catch(e){P[k].err=e.message}
   P[k].busy=false;render(k);
@@ -64,6 +65,33 @@ async function flatten(k){
   if(!confirm(k==='hl'?'Fechar já todas as posições da Hyperliquid (ouro, S&P, EUR/USD)?':'Vender já todas as memecoins da carteira Solana?'))return;
   try{const r=await call('POST',`/${k}/flatten`,{});remember(k,r);P[k].err='';P[k].st=await call('GET',`/${k}/state`)}catch(e){P[k].err=e.message}
   render(k);
+}
+async function resume(){
+  if(!confirm('Retomar a Hyperliquid? O máximo da conta passa a ser o saldo de agora e o bot pode voltar a abrir posições.'))return;
+  try{await call('POST','/hl/resume',{});P.hl.err='';P.hl.st=await call('GET','/hl/state')}catch(e){P.hl.err=e.message}
+  render('hl');
+}
+let pushMsg='';
+async function testPush(k){
+  try{const r=await call('POST','/notify/test',{});pushMsg=r.sent?'Notificação enviada: vê o telemóvel (app ntfy).':r.configured?'O worker tentou enviar mas o ntfy recusou.':'Falta o segredo NTFY_TOPIC no worker (vê o guia).'}catch(e){pushMsg='Erro: '+e.message}
+  render(k);
+}
+const ago=t=>{if(!t)return'nunca';const m=Math.round((Date.now()-t)/60000);return m<1?'agora':m<60?`há ${m} min`:`há ${Math.floor(m/60)} h ${m%60} min`};
+function guardHtml(k,st){
+  const g=st.guard;if(!g)return'';
+  if(!g.on)return`<div class="note">Proteção do servidor: <b>desligada</b> (o worker ainda não tem a memória GUARD; publica a versão nova).</div>`;
+  const last=g.last&&g.last.t?ago(g.last.t):'ainda não correu';
+  const run=g.last&&g.last.t&&Date.now()-g.last.t<20*60e3;
+  if(k==='hl'){
+    const halt=g.halted?`<div class="halt">⛔ <b>PARADO pela proteção do servidor</b>: o saldo caiu de $${(+g.halted.peak).toFixed(2)} para $${(+g.halted.eq).toFixed(2)} ${ago(g.halted.t)}. ${g.halted.mode==='real'?'As posições foram fechadas.':'(simulação)'} Nenhuma entrada nova. <button class="ghost" data-k="hl" data-a="resume">RETOMAR</button></div>`:'';
+    return halt+`<div class="note">Proteção do servidor (corre a cada 5 min, mesmo com a app fechada): ${run?'<span class="up">ativa</span>':'<span class="dn">sem verificações recentes</span>'} · última ${last}${g.peak>0?` · máximo $${(+g.peak).toFixed(2)} · fecha tudo a -${Math.round(g.dd*100)}%`:''}</div>`;
+  }
+  return`<div class="note">Proteção do servidor (a cada 5 min, mesmo com a app fechada): ${run?'<span class="up">ativa</span>':'<span class="dn">sem verificações recentes</span>'} · última ${last}. Vende uma memecoin a -${Math.round(g.sl*100)}% ou +${Math.round(g.tp*100)}% da entrada ou ao fim de ${g.maxHours} h${g.staleMin>0?`; se a app ficar ${g.staleMin} min sem sincronizar, vende tudo`:''}.${g.blocked?` ${g.blocked} bloqueada(s) para recompra.`:''}</div>`;
+}
+function autoHtml(st){
+  const a=st.autopilot;if(!a||!a.on)return'';
+  const notes=a.last&&a.last.notes?Object.entries(a.last.notes).map(([m,n])=>`${m}: ${esc(n)}`).join(' · '):'';
+  return`<div class="note">🤖 <b>Piloto automático no servidor</b>: ${esc(a.label)} em velas de ${esc(a.interval)}. É o worker que decide a Hyperliquid, mesmo com a app fechada; o Macro Desk desta página fica só em papel.${a.last?`<br>Última decisão ${ago(a.last.t)}: ${notes||'—'}`:''}</div>`;
 }
 const tick=()=>{   // sincroniza logo que o desk muda de ideias, senão a cada intervalo
   for(const k of ['hl','sol']){
@@ -100,9 +128,11 @@ function onHtml(k){
   }
   return `<div class="alh"><b>${hl?'HYPERLIQUID · LIVE':'SOLANA · LIVE (MEMECOINS)'}</b><small>${modeTag(st)}</small><button class="ghost" data-k="${k}" data-a="off">DESLIGAR</button></div>
     ${e.err?`<div class="halt">⚠ ${esc(e.err)}</div>`:''}${body}
+    ${st?guardHtml(k,st)+(hl?autoHtml(st):''):''}
     ${e.log.length?`<div class="note">${e.log.join('<br>')}</div>`:''}
-    <div class="pmbar"><button class="ghost" data-k="${k}" data-a="flat">FECHAR TUDO</button></div>
-    <div class="note">${hl?'Os stops ficam na própria Hyperliquid e protegem-te mesmo com a app fechada. Se o desk perder 20%, fecha tudo.':'As saídas das memecoins só acontecem com a app aberta e a funcionar. Se fechares a app com posições abertas, ficam abertas.'}</div>`;
+    <div class="pmbar"><button class="ghost" data-k="${k}" data-a="flat">FECHAR TUDO</button><button class="ghost" data-k="${k}" data-a="push">TESTAR NOTIFICAÇÃO</button></div>
+    ${pushMsg?`<div class="note">${esc(pushMsg)}</div>`:''}
+    <div class="note">${hl?'Os stops ficam na própria Hyperliquid e protegem-te mesmo com a app fechada. O alvo é uma ordem limitada (taxa mais baixa).':(st&&st.guard&&st.guard.on?'Com a app aberta, as saídas seguem o desk. Com a app fechada, a proteção do servidor vende pelas regras acima.':'As saídas das memecoins só acontecem com a app aberta e a funcionar. Se fechares a app com posições abertas, ficam abertas.')}</div>`;
 }
 function render(k){
   const el=$l(k+'Body');if(!el)return;
@@ -118,12 +148,14 @@ function bind(){
       if(a==='on'){const t=$l('liveTok');if(t&&t.value.trim())L.token=t.value.trim();if(!L.token)return;L[k]=true;P[k].err='';P[k].at=0;save();render(k);sync(k)}
       if(a==='off'){if(confirm('Desligar não fecha as posições abertas na corretora. Queres fechá-las agora?'))await flatten(k);L[k]=false;P[k].st=null;save();render(k)}
       if(a==='flat')flatten(k);
+      if(a==='resume')resume();
+      if(a==='push')testPush(k);
     });
     render(k);
   }
   setInterval(tick,5000);setTimeout(tick,2000);
 }
 const setToken=t=>{L.token=t;save();for(const k of ['hl','sol'])render(k)};
-window.LIVE={hlDesired,solDesired,L,P,sync,flatten,setToken};
+window.LIVE={hlDesired,solDesired,L,P,sync,flatten,setToken,resume};
 if($l('hlBody'))bind();
 })();

@@ -47,4 +47,10 @@ const env=(x={})=>({SOL_KEY:ref.key64,HELIUS_API_KEY:'k',...x});
 {const {S,f}=sim();const r=await makeSol(env({SOL_LIVE:'1'}),f).sync(['abc',USDC,M1]);assert.equal(r.skipped[0].reason,'mint inválido');assert.equal(S.sent.length,1);console.log('ok   mint inválido ignorado; USDC nunca é comprado')}
 {const {S,f}=sim({failSend:true});const r=await makeSol(env({SOL_LIVE:'1'}),f).sync([M1]);assert.equal(r.results[0].ok,false);assert.match(r.results[0].error,/Blockhash/);console.log('ok   erro do RPC fica registado')}
 {const {S,f}=sim({tokens:[{mint:M1,ui:3}]});const st=await makeSol(env(),f).state();assert.equal(st.address,ref.pub58);assert.equal(st.usdc,10);assert.equal(st.tokens.length,1);console.log('ok   estado:',JSON.stringify({sol:st.sol,usdc:st.usdc,tokens:st.tokens.length}))}
+{const {S,f}=sim();const now=Date.now();const r=await makeSol(env({SOL_LIVE:'1'}),f).sync([M1,M2],{blocked:{[M1]:now+36e5,[M2]:now-1},now});assert.equal(S.sent.length,1);assert.match(r.skipped[0].reason,/proteção do servidor/);console.log('ok   memecoin vendida pela proteção não é recomprada (o bloqueio expira)')}
+{const {S,f}=sim({tokens:[{mint:M1,ui:3}],impact:{[M1]:0.15}});const r=await makeSol(env({SOL_LIVE:'1'}),f).flatten();assert.equal(S.sent.length,1);assert.equal(r.results[0].ok,true);console.log('ok   vender aceita impacto até 20% (sair vale mais do que ficar preso)')}
+{const {S,f}=sim({tokens:[{mint:M1,ui:3}],impact:{[M1]:0.3}});const r=await makeSol(env({SOL_LIVE:'1'}),f).flatten();assert.equal(S.sent.length,0);assert.match(r.results[0].error,/impacto/);console.log('ok   impacto de 30% na venda é recusado')}
+{const {S,f}=sim({tokens:[{mint:M1,ui:3},{mint:M2,ui:5}]});const sol=makeSol(env({SOL_LIVE:'1'}),f);assert.equal(await sol.valueOf(M1,'3000000'),0.012345);
+ const r=await sol.sellOne(M2);assert.equal(S.sent.length,1);assert.equal(r.results[0].mint,M2);assert.equal(S.swaps[0].quoteResponse.inAmount,'5000000');
+ const r2=await sol.sellOne(M3);assert.match(r2.skipped[0].reason,/já não está/);console.log('ok   valor em USDC e venda de uma só memecoin')}
 console.log('TUDO OK');

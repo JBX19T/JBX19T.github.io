@@ -4,11 +4,25 @@
 (()=>{
 const LT='https://mainnet.zklighter.elliot.ai';
 const DEMO=new URLSearchParams(location.search).has('demo');
-const CFG={start:10000,riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:9,   // ~9 bps por ordem de mercado nos mercados HIP-3 da Hyperliquid (valor de uma fonte secundária, por confirmar)
+/* regras comuns em strategy.js (DSTRAT.DEFAULTS): risco 1%, alavancagem 5×, EMA 20/50, rompimento de 20 velas, ATR 14, stop 2×ATR, alvo 3×ATR, 96 velas,
+   custo 9 bps por ordem de mercado nos mercados HIP-3 da Hyperliquid (valor de uma fonte secundária, por confirmar) */
+const CFG={...DSTRAT.DEFAULTS,start:10000,
  ddStop:.20,dayLoss:.05,
-  res:'15m',resMs:15*60e3,maxATRpct:.03,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
+  res:'15m',resMs:15*60e3,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
 /* só entra se o alvo (3×ATR) for pelo menos 3× o custo de entrar e sair: ATR >= 2×custo. Com 9 bps isto exige ATR >= 0,18% do preço */
 CFG.minATRpct=Math.max(.0005,2*CFG.costBps/1e4);
+CFG.makerBps=3;   // ordens limitadas (maker): só usado pelo teste histórico; o desk em papel entra a mercado
+/* estratégia e tamanho das velas escolhidos no TESTE HISTÓRICO (por omissão: rompimento em velas de 15 min) */
+const STRAT_KEY='dollosStratV1',IV_MS={'15m':9e5,'1h':36e5,'4h':144e5};
+let CHOICE={strategy:'breakout',iv:'15m'};
+if(!DEMO){try{const j=JSON.parse(localStorage.getItem(STRAT_KEY)||'null');if(j&&DSTRAT.PRESETS[j.strategy]&&IV_MS[j.iv])CHOICE={strategy:j.strategy,iv:j.iv}}catch(e){}}
+const BASE={...CFG};   // regras sem os parâmetros próprios da estratégia (o teste histórico compara as estratégias a partir daqui)
+Object.assign(CFG,DSTRAT.withStrategy(CFG,CHOICE.strategy),{res:CHOICE.iv,resMs:IV_MS[CHOICE.iv]});
+function setStrategy(strategy,iv){
+  if(!DSTRAT.PRESETS[strategy]||!IV_MS[iv])return false;
+  try{localStorage.setItem(STRAT_KEY,JSON.stringify({strategy,iv}))}catch(e){return false}
+  return true;   // aplica-se ao recarregar a página
+}
 /* Lighter negoceia estes ativos como perpétuos: o ouro via PAXG (token lastreado a ouro) e o S&P via SPY (ETF) — são proxies. */
 const MK=[
   {key:'GOLD',  label:'OURO',    note:'PAXG',  match:[/^PAXG$/i,/^XAU/i,/^GOLD$/i],dec:2,sim:[4150,.0009]},
@@ -110,9 +124,9 @@ function tickBar(p,px){
 }
 async function pollCandles(m){
   const p=P[m.key];if(p.id==null)return;
-  const end=Date.now(),start=end-CFG.resMs*120;
-  const tries=[`resolution=${CFG.res}&start_timestamp=${Math.floor(start/1000)}&end_timestamp=${Math.floor(end/1000)}&count_back=120`,
-               `resolution=${CFG.res}&start_timestamp=${start}&end_timestamp=${end}&count_back=120`];
+  const end=Date.now(),start=end-CFG.resMs*200;
+  const tries=[`resolution=${CFG.res}&start_timestamp=${Math.floor(start/1000)}&end_timestamp=${Math.floor(end/1000)}&count_back=200`,
+               `resolution=${CFG.res}&start_timestamp=${start}&end_timestamp=${end}&count_back=200`];
   for(const q of tries){
     try{const bars=parseCandles(await jf(`${LT}/api/v1/candles?market_id=${p.id}&${q}`));
       if(bars.length>=5){const prevLast=p.bars.length&&p.src==='lighter'?p.bars[p.bars.length-1].t:0;p.bars=bars.slice(-200);p.src='lighter';p.err='';
@@ -151,8 +165,8 @@ function render(){
     return `<tr><td>${m.label}</td><td>${p.side>0?'LONG':'SHORT'}</td><td>${fmtPx(m,p.entry)}</td><td>${fmtPx(m,px)}</td><td>${fmtPx(m,p.stop)}</td><td>${fmtPx(m,p.tp)}</td><td class="${u>=0?'up':'dn'}">${u>=0?'+':''}${usd(u)}</td><td><button class="ghost" data-k="${m.key}" aria-label="Fechar ${m.label}">✕</button></td></tr>`}).join('');
   body.innerHTML=`${S.halt?`<div class="halt">⛔ <b>PARADO</b> · ${S.halt.msg}. Nenhuma entrada nova. <button class="ghost" id="mkResume">RETOMAR</button></div>`:''}<div class="mkg">${cards}</div>
     <div class="mkacc"><span>Saldo <b>${usd(eq)}</b> <span class="${pnl>=0?'up':'dn'}">(${pnl>=0?'+':''}${(pnl/CFG.start*100).toFixed(2)}%)</span></span><span>${S.wins}W ${S.closed-S.wins}L</span><button class="ghost" id="mkReset">REINICIAR</button></div>
-    ${rows?`<table><thead><tr><th>Ativo</th><th></th><th>Entrada</th><th>Preço</th><th>SL</th><th>TP</th><th>P/L</th><th></th></tr></thead><tbody id="mkRows">${rows}</tbody></table>`:'<div class="note">Sem posições abertas. O bot só entra quando há tendência e rompimento (EMA 20/50 + máximo/mínimo de 20 velas).</div>'}
-    <div class="note">Paper trading: conta fictícia de ${usd(CFG.start)}, risco de 1% por trade, stop 2×ATR, alvo 3×ATR, custo ${CFG.costBps} bps por lado, sem alavancagem acima de ${CFG.maxLev}×. Proteção: se a conta perder ${Math.round(CFG.ddStop*100)}% desde o máximo, fecha tudo e pára; perde ${Math.round(CFG.dayLoss*100)}% num dia, pausa até amanhã (retomar é manual). Ouro e S&P usam proxies do Lighter (PAXG e SPY). O estado fica guardado no telemóvel.</div>`;
+    ${rows?`<table><thead><tr><th>Ativo</th><th></th><th>Entrada</th><th>Preço</th><th>SL</th><th>TP</th><th>P/L</th><th></th></tr></thead><tbody id="mkRows">${rows}</tbody></table>`:`<div class="note">Sem posições abertas. Estratégia: <b>${DSTRAT.PRESETS[CFG.strategy].label}</b> em velas de ${CFG.res}.</div>`}
+    <div class="note">Paper trading: conta fictícia de ${usd(CFG.start)}, risco de 1% por trade, estratégia ${DSTRAT.PRESETS[CFG.strategy].label} (velas de ${CFG.res}), stop ${CFG.stopATR}×ATR, alvo ${CFG.tpATR}×ATR, custo ${CFG.costBps} bps por lado, sem alavancagem acima de ${CFG.maxLev}×. Proteção: se a conta perder ${Math.round(CFG.ddStop*100)}% desde o máximo, fecha tudo e pára; perde ${Math.round(CFG.dayLoss*100)}% num dia, pausa até amanhã (retomar é manual). Ouro e S&P usam proxies do Lighter (PAXG e SPY). O estado fica guardado no telemóvel.</div>`;
 }
 function record(){guard();const e=equity();S.hist.push(e);if(S.hist.length>500)S.hist.shift();save()}
 function bind(){
@@ -173,6 +187,6 @@ async function start(){
   setInterval(()=>MK.forEach(m=>{const p=P[m.key];if(p.src==='ticks'&&p.newBar){p.newBar=false;onBar(m)}}),5000);
 }
 
-window.MACRO={guard,resume,CFG,MK,P,ema,atr,signal,sizeFor,parseMarkets,pickMarket,parseDetail,parseCandles,state:()=>S,reset:()=>{S=fresh()},equity,unreal,open:(k,d,s)=>open(MK.find(m=>m.key===k),d,s),close:k=>close(MK.find(m=>m.key===k),'teste'),setPrice:(k,px)=>{P[k].px=px},checkExits:k=>checkExits(MK.find(m=>m.key===k))};
+window.MACRO={guard,resume,setStrategy,CHOICE,BASE,CFG,MK,P,ema,atr,signal,sizeFor,parseMarkets,pickMarket,parseDetail,parseCandles,state:()=>S,reset:()=>{S=fresh()},equity,unreal,open:(k,d,s)=>open(MK.find(m=>m.key===k),d,s),close:k=>close(MK.find(m=>m.key===k),'teste'),setPrice:(k,px)=>{P[k].px=px},checkExits:k=>checkExits(MK.find(m=>m.key===k))};
 start();
 })();
