@@ -226,7 +226,7 @@ const DEFAULT_HOLDERS='https://grokbot-holders.superavit-app.workers.dev';   // 
 const HOLDERS_API=(()=>{const ok=v=>/^https:\/\//.test(v||'')?v.replace(/\/$/,''):'';
   const q=ok(new URLSearchParams(location.search).get('holders'));
   try{if(q)localStorage.setItem('holders',q);return q||ok(localStorage.getItem('holders'))||DEFAULT_HOLDERS}catch(e){return q||DEFAULT_HOLDERS}})();   // ?holders= fica guardado (útil na app instalada)
-const queue=[],seen=new Set();let lastFill=0,fillBusy=false;
+const queue=[],seen=new Set(),seenAt=new Map(),SEEN_TTL=10*60e3;let lastFill=0,fillBusy=false;   // um token volta a ser analisado 10 min depois (a lista da DexScreener é curta e, sem isto, o bot esgota-a e pára)
 const status=(t,ok)=>{const e=$('src');e.textContent=t;e.style.color=ok?'#ffffff':'#777777'};
 async function jget(u,opts){const r=await (opts?.web&&window.CapacitorWebFetch||fetch)(u,opts);
   if(!r.ok){let m='';try{m=(await r.json()).error||''}catch(e){}throw new Error(r.status+' '+(m||u.split('?')[0]))}
@@ -260,8 +260,9 @@ function mapPair(p){
 async function refill(){
   if(fillBusy||Date.now()-lastFill<15000)return;fillBusy=true;lastFill=Date.now();
   try{
+    const now=Date.now();for(const [k,ts] of seenAt)if(now-ts>SEEN_TTL){seenAt.delete(k);seen.delete(k)}
     const lists=await Promise.all(['token-profiles/latest/v1','token-boosts/latest/v1','token-boosts/top/v1'].map(u=>jget(`${DS}/${u}`).catch(()=>[])));
-    const by={};lists.flat().forEach(x=>{if(!CHAINS.includes(x.chainId))return;const k=x.chainId+':'+x.tokenAddress;if(seen.has(k))return;seen.add(k);(by[x.chainId]??=[]).push(x.tokenAddress)});
+    const by={};lists.flat().forEach(x=>{if(!CHAINS.includes(x.chainId))return;const k=x.chainId+':'+x.tokenAddress;if(seen.has(k))return;seen.add(k);seenAt.set(k,now);(by[x.chainId]??=[]).push(x.tokenAddress)});
     for(const ch in by){for(let i=0;i<by[ch].length;i+=30){
       const pairs=await jget(`${DS}/tokens/v1/${ch}/${by[ch].slice(i,i+30).join(',')}`).catch(()=>[]);
       const best={};pairs.forEach(p=>{const a=p.baseToken.address;if(!best[a]||(p.liquidity?.usd||0)>(best[a].liquidity?.usd||0))best[a]=p});
@@ -538,6 +539,7 @@ async function cycle(){
   const softFail=CFG.soft.find(([k,l,ty])=>t.soft[k]!=null&&(ty==='min'?t.soft[k]<l:t.soft[k]>l));
   if(softFail){S.failIdx=3;renderChain();say('chief',`soft_kill: ${softFail[0]}`);log('l',`✗ ${t.name} soft_kill ${softFail[0]}`);return finish()}
   if(S.halt){S.failIdx=4;renderChain();say('chief','⛔ parado: '+S.halt.msg);log('l',`✗ ${t.name} ignorado (conta parada)`);return finish()}
+  if(S.positions.some(p=>p.t.addr===t.addr)){S.failIdx=4;renderChain();log('l',`✗ ${t.name} já em carteira`);return finish()}
   // pick — CHIEF → SIZE → FILLS
   S.stage=4;renderChain();S.lastPick=t.name;
   say('chief',`pick ${t.name}`,'size');AG.chief.set('last pick',t.name,1);log('p',`PICK ${t.name}`);await sleep(900);
