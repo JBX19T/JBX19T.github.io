@@ -98,3 +98,9 @@ console.log('TUDO OK');
   const f2=async(u,o)=>{const b=JSON.parse(o.body);if(b.type==='allMids'&&b.dex==='xyz')return {ok:true,status:200,json:async()=>({'xyz:GOLD':'4100','xyz:SP500':'1.3','xyz:EUR':'1.12'}),text:async()=>''};return f(u,o)};
   const d2=await makeHL(env(),f2).discover(); assert.equal(d2.resolved.SPX,null); assert.ok(d2.rejected.some(x=>x.includes('SP500')));
   console.log('ok   17 SPX da memecoin e preços absurdos são rejeitados'); }
+// 18 429 da Hyperliquid: repete e acaba por responder
+{ let n = 0; const f = async (u, o) => { const b = JSON.parse(o.body);
+    if (b.type === 'perpDexs' && ++n <= 2) return { ok: false, status: 429, text: async () => '', json: async () => ({}) };
+    const R = j => ({ ok: true, status: 200, text: async () => JSON.stringify(j), json: async () => j });
+    if (b.type === 'perpDexs') return R([null]); if (b.type === 'meta') return R({ universe: [] }); if (b.type === 'allMids') return R({}); throw new Error('x'); };
+  const d = await makeHL(env(), f).discover(); assert.ok(d.dexes.includes('main')); assert.equal(n, 3); console.log('ok   18 429 repetido ' + (n - 1) + 'x e depois funciona'); }
