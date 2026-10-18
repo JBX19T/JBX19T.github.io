@@ -88,10 +88,11 @@ function onHtml(k){
   let body='';
   if(st){
     if(hl){
-      const mk=Object.entries(st.markets||{}).map(([n,m])=>`${n}: ${m?esc(m.coin):'<span class="dn">não encontrado</span>'}`).join(' · ');
+      const mk=Object.entries(st.markets||{}).map(([n,m])=>`${n}: ${m?esc(m.coin)+(m.mid?' ($'+m.mid+')':''):'<span class="dn">não encontrado</span>'}`).join(' · ');
       const eq=st.account?Object.entries(st.account).map(([d,v])=>`${d} ${usd(v)}`).join(' · '):'';
       body+=`<div class="note">Mercados: ${mk}${eq?'<br>Saldo: '+eq:''}${st.agentAddress?'<br>Carteira de API: '+esc(st.agentAddress):''}</div>`;
-      if(Object.values(st.markets||{}).some(m=>!m)&&st.seen&&st.seen.length)body+=`<div class="note">Nomes parecidos na Hyperliquid: ${esc(st.seen.join(', '))}. Se o nome certo for outro, fixa-o em <code>HL_MARKETS</code> no worker.</div>`;
+      if(st.seen&&st.seen.length)body+=`<div class="note">Confere os preços (ouro ≈ preço da onça; S&amp;P 500 ≈ nível do índice; EUR/USD ≈ 1,1). Parecidos na Hyperliquid: ${esc(st.seen.join(' · '))}. Se o nome certo for outro, fixa-o em <code>HL_MARKETS</code> no worker.</div>`;
+      if(st.rejected&&st.rejected.length)body+=`<div class="note">Rejeitados por o preço não fazer sentido: ${esc(st.rejected.join(' · '))}</div>`;
       body+=st.positions&&st.positions.length?`<table><thead><tr><th>Mercado</th><th>Lado</th><th>Qtd</th><th>Entrada</th><th>P/L</th></tr></thead><tbody>${st.positions.map(p=>`<tr><td>${esc(p.coin)}</td><td>${p.szi>0?'LONG':'SHORT'}</td><td>${Math.abs(p.szi)}</td><td>${p.entryPx}</td><td class="${p.pnl>=0?'up':'dn'}">${p.pnl>=0?'+':''}${usd(p.pnl)}</td></tr>`).join('')}</tbody></table>`:'<div class="note">Sem posições na Hyperliquid.</div>';
     }else{
       body+=`<div class="note">Carteira: ${esc(st.address)}<br>SOL ${st.sol.toFixed(4)} · USDC ${usd(st.usdc)} · ticket ${usd(st.ticket)} · máx. ${st.maxOpen} posições</div>`;
