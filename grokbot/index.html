@@ -138,6 +138,8 @@ th:first-child,td:first-child{text-align:left}
 
 <div class="panel"><div class="ph"><span>RESULTADOS · PAPER</span><em id="resInfo"></em></div><div id="resBody"></div></div>
 
+<div class="panel"><div class="ph"><span>TESTE HISTÓRICO · MACRO DESK</span><em id="btInfo"></em></div><div id="btBody" class="livebody"></div></div>
+
 <div class="two">
   <div class="panel"><div class="ph"><span>COPY DESK · FOLLOW A WALLET</span><em id="copyInfo"></em></div>
     <div class="copy">
@@ -597,8 +599,11 @@ requestAnimationFrame(drawOffice);
 if('serviceWorker' in navigator&&!window.Capacitor&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 loop();
 </script>
+<script src="strategy.js"></script>
 <script src="macro.js"></script>
 <script src="results.js"></script>
 <script src="live.js"></script>
+<script src="backtest.js"></script>
+<script src="backtest-ui.js"></script>
 </body>
 </html>

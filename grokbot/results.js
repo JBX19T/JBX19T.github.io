@@ -35,7 +35,7 @@ function block(title,st,eq){
     ${row('Equity agora',`$${eq.toFixed(2)}`)}
     ${row('Trades',`${st.n} · ${st.wins}W ${st.losses}L`)}
     ${row('Taxa de acerto',st.rate==null?'—':(st.rate*100).toFixed(0)+'%')}
-    ${row('Ganho / perda média',st.n?`${st.avgWin==null?'—':usd(st.avgWin)} / ${st.avgLoss==null?'—':usd(-st.avgLoss)}`:'—')}
+    ${row('Ganho / perda média',st.n?`${st.avgWin==null?'—':usd(st.avgWin)} / ${st.avgLoss==null?'—':usd(st.avgLoss)}`:'—')}
     ${row('Fator de lucro',st.pf==null?'—':st.pf===Infinity?'∞':st.pf.toFixed(2))}
     ${row('Média por trade',st.exp==null?'—':usd(st.exp))}
     ${row('Melhor / pior',st.n?`${usd(st.best)} / ${usd(st.worst)}`:'—')}

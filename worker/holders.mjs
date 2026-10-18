@@ -104,6 +104,7 @@ export default {
           const hl = makeHL(env);
           if (route === 'GET /hl/state') return json(await hl.state(), 200, { 'cache-control': 'no-store' });
           if (route === 'POST /hl/sync') return json(await hl.sync(body.desired || {}), 200, { 'cache-control': 'no-store' });
+          if (route === 'POST /hl/candles') return json(await makeHL({ ...env, HL_NETWORK: 'mainnet', HL_LIVE: '0' }).candles(body.interval, body.days), 200, { 'cache-control': 'no-store' });   // só leitura, sempre na rede real
           if (route === 'POST /hl/flatten') return json(await hl.flatten(), 200, { 'cache-control': 'no-store' });
         } else {
           const sol = makeSol(env);
