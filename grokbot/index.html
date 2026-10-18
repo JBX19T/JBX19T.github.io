@@ -74,6 +74,13 @@ th:first-child,td:first-child{text-align:left}
 .mkp{font:700 18px system-ui,sans-serif;color:#fff;margin:4px 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mkr{display:flex;justify-content:space-between;align-items:baseline;gap:6px;font-size:10.5px;min-width:0}.mkr small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sg{color:var(--dim)}
+#resBody{padding:4px 12px 12px;font-size:11px}
+.rsg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.rs{background:#0a0a0a;border:1px solid var(--line);border-radius:8px;padding:9px 10px;min-width:0}
+.rs h4{margin:0 0 6px;font:800 12px system-ui,sans-serif;letter-spacing:1px;color:#fff;display:flex;justify-content:space-between;gap:6px}.rs h4 small{color:var(--dim);font:400 9.5px ui-monospace,monospace;letter-spacing:0}
+.rr{display:flex;justify-content:space-between;gap:8px;padding:2px 0;color:var(--dim)}.rr b{color:#fff;font-weight:400;text-align:right}
+.rs table{margin-top:6px;font-size:10px}.rs th,.rs td{padding:2px 3px}
+.rs .sub{color:var(--dim);font-size:9.5px;margin:7px 0 0;letter-spacing:.5px}
 .mkacc{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 8px;font-size:11px;color:var(--dim)}.mkacc b{color:#fff}
 #mkBody{padding:4px 12px 12px;font-size:11px}
 .log{max-height:150px;overflow:auto;padding:4px 12px 10px;font-size:11px;line-height:1.7}
@@ -81,7 +88,7 @@ th:first-child,td:first-child{text-align:left}
 .foot{color:#777;font-size:10px;text-align:center;margin-top:8px}
 @media(max-width:820px){.cards{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}header .tag{display:none}}
 @media(max-width:600px){
-  .mkg{grid-template-columns:1fr}.mkp{font-size:16px}#mkBody{padding:4px 8px 10px}
+  .mkg,.rsg{grid-template-columns:1fr}.mkp{font-size:16px}#mkBody,#resBody{padding:4px 8px 10px}
   body{padding:8px}
   header{flex-wrap:wrap;gap:8px 10px}
   header h1{font-size:17px;letter-spacing:1.5px;white-space:nowrap;flex:1}
@@ -122,6 +129,8 @@ th:first-child,td:first-child{text-align:left}
 
 <div class="panel"><div class="ph"><span>MACRO DESK · OURO · EUR/USD · S&amp;P 500</span><em id="mkInfo"></em></div><div id="mkBody"></div></div>
 
+<div class="panel"><div class="ph"><span>RESULTADOS · PAPER</span><em id="resInfo"></em></div><div id="resBody"></div></div>
+
 <div class="two">
   <div class="panel"><div class="ph"><span>COPY DESK · FOLLOW A WALLET</span><em id="copyInfo"></em></div>
     <div class="copy">
@@ -135,7 +144,7 @@ th:first-child,td:first-child{text-align:left}
       <div class="pmbar">Saldo inicial $<input id="pmStart" type="number" min="100" step="100"><button class="ghost" id="pmReset">REINICIAR</button></div>
       <table><thead><tr><th>Asset</th><th>Entrada</th><th>Preço</th><th>Valor</th><th>P/L</th><th></th></tr></thead><tbody id="pbody"></tbody></table>
       <div class="note" id="pempty">Sem posições abertas.</div>
-      <div class="note">Proteção de capital: posições de 2% a 5% do saldo (no máximo 3), e se a conta perder 20% desde o seu máximo o bot fecha tudo e pára; perde 5% num dia, pausa até amanhã. Retomar é sempre manual.</div>
+      <div class="note">Proteção de capital: posições de 2% a 5% do saldo (no máximo 3), e se a conta perder 20% desde o seu máximo o bot fecha tudo e pára; perde 5% num dia, pausa até amanhã. Retomar é sempre manual. O saldo, as posições e o histórico ficam guardados neste aparelho.</div>
     </div></div>
 </div>
 
@@ -213,8 +222,16 @@ order.forEach(k=>{const a=AG[k];a.el=document.createElement('div');a.el.classNam
 /* ===== estado ===== */
 try{const v=+localStorage.getItem('paperStart');if(v>=100)CFG.startBalance=v}catch(e){}
 const S={cash:CFG.startBalance,positions:[],hist:[CFG.startBalance],vol:[0],closed:0,wins:0,scanned:0,pages:0,pts:0,
-  day:1,t:new Date(Date.UTC(2026,9,4,22,0)),cur:null,stage:-1,passed:[],failIdx:-1,lastPick:'PAPER',peak:CFG.startBalance,halt:null,dayGuard:{d:'',eq:CFG.startBalance}};
+  day:1,t:new Date(Date.UTC(2026,9,4,22,0)),cur:null,stage:-1,passed:[],failIdx:-1,lastPick:'PAPER',peak:CFG.startBalance,halt:null,dayGuard:{d:'',eq:CFG.startBalance},trades:[],since:Date.now(),maxDD:0,ddPeak:CFG.startBalance};
 const equity=()=>S.cash+S.positions.reduce((s,p)=>s+p.size*(p.px/p.entry),0);
+/* o saldo, as posições e o histórico ficam guardados no aparelho (não no modo ?demo) */
+const MEME_KEY='dollosMemeV1',IS_DEMO=new URLSearchParams(location.search).has('demo');
+const slimT=t=>({name:t.name,addr:t.addr,chain:t.chain,dex:t.dex,pair:t.pair,url:t.url,px:t.px,shape:t.shape,liq:t.liq,mcap:t.mcap,age:t.age,copyFrom:t.copyFrom||null,candles:[],soft:{}});
+function saveMeme(){if(IS_DEMO)return;try{localStorage.setItem(MEME_KEY,JSON.stringify({start:CFG.startBalance,cash:S.cash,positions:S.positions.map(p=>({...p,t:slimT(p.t)})),hist:S.hist,vol:S.vol,
+  closed:S.closed,wins:S.wins,scanned:S.scanned,day:S.day,peak:S.peak,halt:S.halt,dayGuard:S.dayGuard,trades:S.trades,since:S.since,maxDD:S.maxDD,ddPeak:S.ddPeak}))}catch(e){}}
+if(!IS_DEMO)try{const j=JSON.parse(localStorage.getItem(MEME_KEY)||'null');
+  if(j&&j.start===CFG.startBalance&&Number.isFinite(j.cash)&&Array.isArray(j.positions))Object.assign(S,{cash:j.cash,positions:j.positions,hist:j.hist?.length?j.hist:[j.cash],vol:j.vol?.length?j.vol:[0],closed:j.closed||0,wins:j.wins||0,scanned:j.scanned||0,day:j.day||1,
+    peak:j.peak||j.cash,halt:j.halt||null,dayGuard:j.dayGuard||S.dayGuard,trades:j.trades||[],since:j.since||Date.now(),maxDD:j.maxDD||0,ddPeak:j.ddPeak||j.peak||j.cash})}catch(e){}
 
 /* ===== dados reais: DexScreener (+ GeckoTerminal para velas) ===== */
 const DEMO=new URLSearchParams(location.search).has('demo');
@@ -226,7 +243,7 @@ const DEFAULT_HOLDERS='https://grokbot-holders.superavit-app.workers.dev';   // 
 const HOLDERS_API=(()=>{const ok=v=>/^https:\/\//.test(v||'')?v.replace(/\/$/,''):'';
   const q=ok(new URLSearchParams(location.search).get('holders'));
   try{if(q)localStorage.setItem('holders',q);return q||ok(localStorage.getItem('holders'))||DEFAULT_HOLDERS}catch(e){return q||DEFAULT_HOLDERS}})();   // ?holders= fica guardado (útil na app instalada)
-const queue=[],seen=new Set();let lastFill=0,fillBusy=false;
+const queue=[],seen=new Set(),seenAt=new Map(),SEEN_TTL=10*60e3;let lastFill=0,fillBusy=false;   // um token volta a ser analisado 10 min depois (a lista da DexScreener é curta e, sem isto, o bot esgota-a e pára)
 const status=(t,ok)=>{const e=$('src');e.textContent=t;e.style.color=ok?'#ffffff':'#777777'};
 async function jget(u,opts){const r=await (opts?.web&&window.CapacitorWebFetch||fetch)(u,opts);
   if(!r.ok){let m='';try{m=(await r.json()).error||''}catch(e){}throw new Error(r.status+' '+(m||u.split('?')[0]))}
@@ -260,8 +277,9 @@ function mapPair(p){
 async function refill(){
   if(fillBusy||Date.now()-lastFill<15000)return;fillBusy=true;lastFill=Date.now();
   try{
+    const now=Date.now();for(const [k,ts] of seenAt)if(now-ts>SEEN_TTL){seenAt.delete(k);seen.delete(k)}
     const lists=await Promise.all(['token-profiles/latest/v1','token-boosts/latest/v1','token-boosts/top/v1'].map(u=>jget(`${DS}/${u}`).catch(()=>[])));
-    const by={};lists.flat().forEach(x=>{if(!CHAINS.includes(x.chainId))return;const k=x.chainId+':'+x.tokenAddress;if(seen.has(k))return;seen.add(k);(by[x.chainId]??=[]).push(x.tokenAddress)});
+    const by={};lists.flat().forEach(x=>{if(!CHAINS.includes(x.chainId))return;const k=x.chainId+':'+x.tokenAddress;if(seen.has(k))return;seen.add(k);seenAt.set(k,now);(by[x.chainId]??=[]).push(x.tokenAddress)});
     for(const ch in by){for(let i=0;i<by[ch].length;i+=30){
       const pairs=await jget(`${DS}/tokens/v1/${ch}/${by[ch].slice(i,i+30).join(',')}`).catch(()=>[]);
       const best={};pairs.forEach(p=>{const a=p.baseToken.address;if(!best[a]||(p.liquidity?.usd||0)>(best[a].liquidity?.usd||0))best[a]=p});
@@ -275,6 +293,7 @@ async function getToken(){
   for(let tries=0;;tries++){
     if(!queue.length){refill();await sleep(1500);if(!queue.length&&tries>3){S.cur=null;status('A AGUARDAR DADOS…',false);await sleep(8000)}continue}
     const t=queue.shift();if(queue.length<5)refill();
+    if(!S.cur)status('DEXSCREENER · LIVE',true);
     await loadCandles(t);return t;
   }
 }
@@ -351,7 +370,7 @@ $('pbody').addEventListener('click',e=>{const i=e.target.dataset.i;if(i!=null&&S
 $('pmStart').value=CFG.startBalance;
 $('pmReset').addEventListener('click',()=>{const v=+$('pmStart').value;if(!(v>=100))return;if(!confirm(`Reiniciar a carteira de paper money com $${v}?`))return;
   CFG.startBalance=v;try{localStorage.setItem('paperStart',v)}catch(e){}
-  S.cash=v;S.positions=[];S.hist=[v];S.vol=[0];S.closed=S.wins=0;S.peak=v;S.halt=null;S.dayGuard={d:'',eq:v};renderPortfolio();renderHalt();drawBal()});
+  S.cash=v;S.positions=[];S.hist=[v];S.vol=[0];S.closed=S.wins=0;S.peak=v;S.halt=null;S.dayGuard={d:'',eq:v};S.trades=[];S.since=Date.now();S.maxDD=0;S.ddPeak=v;saveMeme();renderPortfolio();renderHalt();drawBal()});
 $('halt').addEventListener('click',e=>{if(e.target.id==='resumeBtn')resumeTrading()});
 
 /* ===== modo demo (?demo): gerador aleatório, sem rede ===== */
@@ -479,22 +498,23 @@ function log(cls,txt){const d=document.createElement('div');d.innerHTML=`<span c
 function move(k,spot){const d=desks[spot||k];bots[k].tx=d[0]+rnd(-.03,.03);bots[k].ty=d[1]+rnd(-.04,-.01)}
 function closePos(p,why){
   const r=p.px/p.entry-1;S.positions.splice(S.positions.indexOf(p),1);const pnl=p.size*r;S.cash+=p.size+pnl;S.closed++;if(pnl>0)S.wins++;S.vol.push(pnl);
+  S.trades.push({l:p.t.name,ch:p.t.chain,o:p.opened,c:Date.now(),en:p.entry,ex:p.px,nt:p.size,pnl,why,cp:p.copy||null,liq:p.t.liq,mc:p.t.mcap});if(S.trades.length>500)S.trades.shift();
   say('risk',`${why} ${p.t.name} ${r>=0?'+':''}${(r*100).toFixed(1)}%`);log(pnl>0?'w':'l',`CLOSE ${p.t.name} ${why}${p.copy?' (copy '+p.copy+')':''} ${pnl>=0?'+':''}${money(pnl)}`);
-  AG.risk.set('closed',`${S.wins}W ${S.closed-S.wins}L`,S.closed?S.wins/S.closed:0);renderPortfolio();
+  AG.risk.set('closed',`${S.wins}W ${S.closed-S.wins}L`,S.closed?S.wins/S.closed:0);renderPortfolio();saveMeme();window.RESULTS&&RESULTS.refresh();
 }
 const todayUTC=()=>new Date().toISOString().slice(0,10);
 function haltAll(kind,msg,why,day){S.positions.slice().forEach(p=>closePos(p,why));S.halt={kind,msg,day};log('l','⛔ PARADO · '+msg);say('risk','⛔ '+msg)}
 function guard(){   // proteção de capital: corre a cada ciclo e a cada atualização de preços
   const e=equity(),d=todayUTC();
   if(S.dayGuard.d!==d)S.dayGuard={d,eq:e};
-  if(e>S.peak)S.peak=e;
+  if(e>S.peak)S.peak=e;if(e>S.ddPeak)S.ddPeak=e;S.maxDD=Math.max(S.maxDD,1-e/S.ddPeak);
   if(!S.halt){
     if(e<=S.peak*(1-CFG.ddStop))haltAll('dd',`perda de ${Math.round(CFG.ddStop*100)}% desde o máximo da conta`,'kill-switch');
     else if(e<=S.dayGuard.eq*(1-CFG.dayLoss))haltAll('day',`perda diária de ${Math.round(CFG.dayLoss*100)}%`,'limite diário',d);
   }else if(S.halt.kind==='day'&&S.halt.day!==d){S.halt=null;log('p','retomado: novo dia')}
   renderHalt();
 }
-function resumeTrading(){S.halt=null;S.peak=equity();S.dayGuard={d:todayUTC(),eq:equity()};renderHalt();log('p','retomado manualmente')}
+function resumeTrading(){S.halt=null;S.peak=equity();S.dayGuard={d:todayUTC(),eq:equity()};renderHalt();log('p','retomado manualmente');saveMeme()}
 function renderHalt(){const el=$('halt');if(!el)return;el.hidden=!S.halt;if(S.halt)el.innerHTML=`⛔ <b>PARADO</b> · ${S.halt.msg}. Nenhuma compra nova. <button class="ghost" id="resumeBtn">RETOMAR</button>`}
 async function tickPositions(){
   if(DEMO)S.positions.forEach(p=>{p.px*=1+rnd(-.07,.085)+(p.t.shape-.5)*.015;p.t.px=p.px});else await refreshPrices();
@@ -537,6 +557,7 @@ async function cycle(){
   const softFail=CFG.soft.find(([k,l,ty])=>t.soft[k]!=null&&(ty==='min'?t.soft[k]<l:t.soft[k]>l));
   if(softFail){S.failIdx=3;renderChain();say('chief',`soft_kill: ${softFail[0]}`);log('l',`✗ ${t.name} soft_kill ${softFail[0]}`);return finish()}
   if(S.halt){S.failIdx=4;renderChain();say('chief','⛔ parado: '+S.halt.msg);log('l',`✗ ${t.name} ignorado (conta parada)`);return finish()}
+  if(S.positions.some(p=>p.t.addr===t.addr)){S.failIdx=4;renderChain();log('l',`✗ ${t.name} já em carteira`);return finish()}
   // pick — CHIEF → SIZE → FILLS
   S.stage=4;renderChain();S.lastPick=t.name;
   say('chief',`pick ${t.name}`,'size');AG.chief.set('last pick',t.name,1);log('p',`PICK ${t.name}`);await sleep(900);
@@ -545,7 +566,7 @@ async function cycle(){
   move('size','size');say('size',`ticket ${(pct*100).toFixed(1)}% = ${money(size)}`);AG.size.set('ticket',money(size),pct/CFG.ticketPct[1]);await sleep(900);
   move('fills','fills');const slip=DEMO?rnd(.002,.02):Math.min(.08,size/t.liq+.003);   // paper: slippage ~ ticket/liquidez + feesay('fills',`bought ${t.name} · slip ${(slip*100).toFixed(2)}%`);
   S.cash-=size;S.positions.push({t,size,entry:t.px*(1+slip),px:t.px,age:0,opened:Date.now(),copy:t.copyFrom||null});S.pos=t.px;AG.fills.set('open',S.positions.length+' pos',S.positions.length/5);
-  renderPortfolio();log('p',`BUY ${t.name}${t.copyFrom?' (copy ← '+t.copyFrom+')':''} ${money(size)} @ ${t.px<.01?t.px.toExponential(2):t.px.toFixed(4)}`);await sleep(900);
+  renderPortfolio();saveMeme();log('p',`BUY ${t.name}${t.copyFrom?' (copy ← '+t.copyFrom+')':''} ${money(size)} @ ${t.px<.01?t.px.toExponential(2):t.px.toFixed(4)}`);await sleep(900);
   finish();
 }
 function finish(){
@@ -553,14 +574,15 @@ function finish(){
   S.hist.push(equity());if(S.hist.length>70){S.hist.shift();S.vol.shift()}while(S.vol.length<S.hist.length)S.vol.push(0);
   if(S.scanned%40===0)S.day++;
   const open=S.positions.length;AG.risk.set('open',open+' pos · '+money(S.positions.reduce((s,p)=>s+p.size,0)),open/5);
-  for(const k in bots)move(k);drawBal();drawChart();
+  for(const k in bots)move(k);drawBal();drawChart();saveMeme();
 }
 async function loop(){for(;;){await cycle();await sleep(500)}}
+window.MEME={state:()=>S,start:()=>CFG.startBalance};
 
 /* ===== init ===== */
 $('deskinfo').textContent=DEMO?'PAPER TRADING · DEMO':'PAPER TRADING · LIVE DATA';
 if(DEMO)status('DEMO · SIMULADO',true);else status('A LIGAR À DEXSCREENER…',false);
-renderTh(null);renderChain();drawBal();drawChart();renderFollow();renderPortfolio();
+renderTh(null);renderChain();drawBal();drawChart();renderFollow();renderPortfolio();renderHalt();$('balLabel').textContent=`BALANCE · DAY ${S.day} · PAPER`;
 if(!DEMO){S.t=new Date();showClock();setInterval(()=>{S.t=new Date();showClock()},1000)}   // relógio real corre mesmo à espera de dados
 setInterval(pollFollow,DEMO?20000:POLL_MS);setTimeout(pollFollow,2000);
 addEventListener('resize',()=>{drawBal();drawChart()});
@@ -569,5 +591,6 @@ if('serviceWorker' in navigator&&!window.Capacitor&&location.protocol.startsWith
 loop();
 </script>
 <script src="macro.js"></script>
+<script src="results.js"></script>
 </body>
 </html>
