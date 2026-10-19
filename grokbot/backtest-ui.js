@@ -101,7 +101,7 @@ async function fetchFunding(coins,from,to){
   return{funding:out,cover};
 }
 /* aprovação para dinheiro real: guardada no telemóvel e enviada ao worker (para o piloto automático) */
-const APPROVAL_KEY='dollosApprovalV1';
+const APPROVAL_KEY='dollosApprovalV2';
 function approvals(){try{return JSON.parse(localStorage.getItem(APPROVAL_KEY)||'{}')||{}}catch(e){return{}}}
 function approve(best,iv){
   const B=best.B,a={strategy:best.strategy,iv,at:Date.now(),n:B.n,avgR:B.avgR,pf:B.pf,tR:B.tR,exec:best.exec};
@@ -109,8 +109,8 @@ function approve(best,iv){
   if(token()&&api()){const f=window.CapacitorWebFetch||fetch;f(api()+'/hl/approve',{method:'POST',headers:{'x-token':token(),'content-type':'application/json'},body:JSON.stringify(a)}).catch(()=>{})}
 }
 function toBars(j){
-  const out={},coins={};
-  for(const [k,m] of Object.entries(j.markets||{})){if(!m||!m.bars||!m.bars.length)continue;coins[k]=m.coin;out[k]=m.bars.map(a=>({t:a[0],o:a[1],h:a[2],l:a[3],c:a[4]})).sort((x,y)=>x.t-y.t)}
+  const out={},coins={},ms=MS[j.interval||state.iv]||0,now=Date.now();
+  for(const [k,m] of Object.entries(j.markets||{})){if(!m||!m.bars||!m.bars.length)continue;coins[k]=m.coin;out[k]=m.bars.map(a=>({t:a[0],o:a[1],h:a[2],l:a[3],c:a[4]})).filter(b=>b.t+ms<=now).sort((x,y)=>x.t-y.t)}   // só velas fechadas
   return{bars:out,coins};
 }
 async function run(){
@@ -206,7 +206,7 @@ function resHtml(){
     ${row('Média por trade em R',s.avgR==null?'—':`${s.avgR.toFixed(2)} R <small>(antes de custos ${s.avgGrossR.toFixed(2)} R · custos ${s.costR.toFixed(2)} R)</small>`)}
     ${row('Acerto para empatar',s.breakEvenWin==null?'— (sem alvo fixo: depende do tamanho dos ganhos)':`~${Math.round(s.breakEvenWin*100)}% (antes de custos)`)}
     ${row('Ganho / perda média',s.n?`${s.avgWin==null?'—':usd(s.avgWin)} / ${s.avgLoss==null?'—':usd(s.avgLoss)}`:'—')}
-    ${row('Taxas / funding pagos',`${usd(-s.feesUsd)} / ${Object.keys(R.cover||{}).length?usd(-s.fundUsd):'não incluído'}`)}
+    ${row('Taxas / slippage / funding',`${usd(-s.feesUsd)} / ${usd(-(s.slipUsd||0))} / ${Object.keys(R.cover||{}).length?usd(-s.fundUsd):'não incluído'}`)}
     ${row('Pior queda',(s.maxDD*100).toFixed(1)+'%')}
     ${row('Paragens de proteção',`${s.halts.dd} de -20% · ${s.halts.day} diárias`)}
     ${s.firstHalt?row('1.ª paragem de -20%',`${dt(s.firstHalt.t)} · conta $${s.firstHalt.equity.toFixed(0)} (${pct(s.firstHalt.equity/MACRO.CFG.start-1)})`):''}
@@ -229,7 +229,7 @@ function render(){
   const el=$b('btBody');if(!el)return;
   if(DEMO||!api()){el.innerHTML='<div class="note">Indisponível no modo demo ou sem o endereço do worker.</div>';return}
   const sel=Object.entries(IV).map(([k,v])=>`<option value="${k}" ${state.iv===k?'selected':''}>${v.label}</option>`).join('');
-  el.innerHTML=`<div class="note">Corre as <b>mesmas regras do Macro Desk</b> (mesmo risco, alavancagem, custos de 9 bps e paragens de -20% e -5%) sobre velas reais passadas de ouro, S&amp;P 500 e EUR/USD da Hyperliquid, com o funding real. Depois compara ${Object.keys(DSTRAT.PRESETS).length} estratégias (${Object.values(DSTRAT.PRESETS).map(p=>p.short).join(', ')}) com ordens a mercado e limitadas, num teste em duas partes. Não envia ordens nem gasta nada. A Hyperliquid só guarda as últimas 5000 velas por mercado.</div>
+  el.innerHTML=`<div class="note">Corre as <b>mesmas regras do Macro Desk</b> (mesmo risco, alavancagem, custos de 9 bps e paragens de -20% e -5%) sobre velas reais passadas de ouro, S&amp;P 500 e EUR/USD da Hyperliquid, com o funding real. Depois compara ${Object.keys(DSTRAT.PRESETS).length} estratégias (${Object.values(DSTRAT.PRESETS).map(p=>p.short).join(', ')}) com ordens a mercado e limitadas, num teste em duas partes. Não envia ordens nem gasta nada. A Hyperliquid só guarda as últimas 5000 velas por mercado. Convenções: o sinal nasce ao fecho da vela e a ordem enche à abertura da seguinte, com taxa e slippage; o alvo é uma ordem limitada (taxa maker); o stop paga slippage; só entra se o custo de ida e volta for no máximo 15% do risco. O slippage (3 bps, stops 5 bps) é uma SUPOSIÇÃO até haver execuções reais medidas (ver «Execuções reais registadas» no painel da Hyperliquid).</div>
     ${token()?'':`<div class="pmbar"><input id="btTok" type="password" autocomplete="off" placeholder="token do worker (APP_TOKEN)"></div>`}
     <div class="pmbar"><select id="btSrc">${Object.entries(SRC).map(([k,v])=>`<option value="${k}" ${state.src===k?'selected':''}>${v.label}</option>`).join('')}</select></div>
     ${state.src==='long'?`<div class="note">Histórico longo: velas spot da Binance desde 2020 (ouro = PAXG, EUR/USD = EURUSDT), só em 1 h e 4 h. Dá muitas mais trades para a 2.ª parte e por isso um veredicto mais fiável. Não tem S&amp;P 500 nem funding; os custos são os mesmos (9 bps).${state.iv==='15m'?' <b>Em 15 min usa a Hyperliquid.</b>':''}</div>`:''}

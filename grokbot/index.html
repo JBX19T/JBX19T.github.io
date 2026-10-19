@@ -180,6 +180,7 @@ const CFG = {
   ddStop: 0.20,                  // travão: perda de 20% desde o máximo da conta -> fecha tudo e pára
   dayLoss: 0.05,                 // pausa até ao dia seguinte se perder 5% num dia
   takeProfit: 0.35, stopLoss: -0.14, maxHoldTicks: 22, maxHoldMin: 60,
+  feeBps: 50,                    // taxa da pool por lado (SUPOSIÇÃO: 0,25–1% é o normal nas pools de memecoins). Antes o papel não cobrava nada; saída também paga slippage
   hard: [  // [chave, limite, tipo, métrica]
     ['min_age_minutes', 15,     'min','age',    v=>v+'m'],
     ['min_liquidity_usd',12000, 'min','liq',    fmt],
@@ -506,8 +507,10 @@ function log(cls,txt){const d=document.createElement('div');d.innerHTML=`<span c
 /* ===== lógica do desk ===== */
 function move(k,spot){const d=desks[spot||k];bots[k].tx=d[0]+rnd(-.03,.03);bots[k].ty=d[1]+rnd(-.04,-.01)}
 function closePos(p,why){
-  const r=p.px/p.entry-1;S.positions.splice(S.positions.indexOf(p),1);const pnl=p.size*r;S.cash+=p.size+pnl;S.closed++;if(pnl>0)S.wins++;S.vol.push(pnl);
-  S.trades.push({l:p.t.name,ch:p.t.chain,o:p.opened,c:Date.now(),en:p.entry,ex:p.px,nt:p.size,pnl,why,cp:p.copy||null,liq:p.t.liq,mc:p.t.mcap});if(S.trades.length>500)S.trades.shift();
+  // a saída também paga slippage (tamanho/liquidez, como a entrada) e a taxa da pool; antes só a entrada tinha custo e o papel saía a preço de mercado
+  const sx=DEMO?.01:Math.min(.08,p.size/((p.t&&p.t.liq)||1e5)+.003),exitPx=p.px*(1-sx-(CFG.feeBps||0)/1e4);
+  const r=exitPx/p.entry-1;S.positions.splice(S.positions.indexOf(p),1);const pnl=p.size*r;S.cash+=p.size+pnl;S.closed++;if(pnl>0)S.wins++;S.vol.push(pnl);
+  S.trades.push({l:p.t.name,ch:p.t.chain,o:p.opened,c:Date.now(),en:p.entry,ex:exitPx,nt:p.size,pnl,why,cp:p.copy||null,liq:p.t.liq,mc:p.t.mcap});if(S.trades.length>500)S.trades.shift();
   say('risk',`${why} ${p.t.name} ${r>=0?'+':''}${(r*100).toFixed(1)}%`);log(pnl>0?'w':'l',`CLOSE ${p.t.name} ${why}${p.copy?' (copy '+p.copy+')':''} ${pnl>=0?'+':''}${money(pnl)}`);
   AG.risk.set('closed',`${S.wins}W ${S.closed-S.wins}L`,S.closed?S.wins/S.closed:0);renderPortfolio();saveMeme();window.RESULTS&&RESULTS.refresh();
 }
@@ -573,8 +576,9 @@ async function cycle(){
   const pct=rnd(...CFG.ticketPct),eq=equity(),size=Math.min(S.cash*.95,eq*pct);
   if(size<50||S.positions.length>=CFG.maxOpen){say('size','no room — passing');log('l',`✗ ${t.name} no capital`);return finish()}
   move('size','size');say('size',`ticket ${(pct*100).toFixed(1)}% = ${money(size)}`);AG.size.set('ticket',money(size),pct/CFG.ticketPct[1]);await sleep(900);
-  move('fills','fills');const slip=DEMO?rnd(.002,.02):Math.min(.08,size/t.liq+.003);   // paper: slippage ~ ticket/liquidez + feesay('fills',`bought ${t.name} · slip ${(slip*100).toFixed(2)}%`);
-  S.cash-=size;S.positions.push({t,size,entry:t.px*(1+slip),px:t.px,age:0,opened:Date.now(),copy:t.copyFrom||null});S.pos=t.px;AG.fills.set('open',S.positions.length+' pos',S.positions.length/5);
+  move('fills','fills');const slip=DEMO?rnd(.002,.02):Math.min(.08,size/t.liq+.003);   /* paper: slippage ~ ticket/liquidez */
+  say('fills',`bought ${t.name} · slip ${(slip*100).toFixed(2)}% + fee ${(CFG.feeBps/100).toFixed(2)}%`);   // (esta linha estava dentro do comentário anterior e nunca corria)
+  S.cash-=size;S.positions.push({t,size,entry:t.px*(1+slip+(CFG.feeBps||0)/1e4),px:t.px,age:0,opened:Date.now(),copy:t.copyFrom||null});S.pos=t.px;AG.fills.set('open',S.positions.length+' pos',S.positions.length/5);
   renderPortfolio();saveMeme();log('p',`BUY ${t.name}${t.copyFrom?' (copy ← '+t.copyFrom+')':''} ${money(size)} @ ${t.px<.01?t.px.toExponential(2):t.px.toFixed(4)}`);await sleep(900);
   finish();
 }

@@ -17,7 +17,10 @@ function compute(trades,start,maxDD,since){
     const r=REASON[t.why]||t.why||'?';(byReason[r]??={n:0,pnl:0});byReason[r].n++;byReason[r].pnl+=t.pnl;
     const d=new Date(t.c).toISOString().slice(0,10);(byDay[d]??={n:0,pnl:0});byDay[d].n++;byDay[d].pnl+=t.pnl;
   }
-  return{n,wins:w.length,losses:l.length,rate:n?w.length/n:null,net,netPct:start?net/start:null,
+  // em R (múltiplos do risco da trade), só para trades que registaram o risco (o Macro Desk regista; as memecoins não têm stop fixo em %)
+  const rt=trades.filter(t=>t.risk>0),mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  const avgR=mean(rt.map(t=>t.pnl/t.risk)),costR=mean(rt.filter(t=>t.cost!=null).map(t=>t.cost/t.risk));
+  return{avgR,costR,nR:rt.length,n,wins:w.length,losses:l.length,rate:n?w.length/n:null,net,netPct:start?net/start:null,
     avgWin:w.length?gw/w.length:null,avgLoss:l.length?-gl/l.length:null,
     pf:gl>0?gw/gl:(gw>0?Infinity:null),exp:n?net/n:null,
     best:n?Math.max(...trades.map(t=>t.pnl)):null,worst:n?Math.min(...trades.map(t=>t.pnl)):null,
@@ -38,6 +41,7 @@ function block(title,st,eq){
     ${row('Ganho / perda média',st.n?`${st.avgWin==null?'—':usd(st.avgWin)} / ${st.avgLoss==null?'—':usd(st.avgLoss)}`:'—')}
     ${row('Fator de lucro',st.pf==null?'—':st.pf===Infinity?'∞':st.pf.toFixed(2))}
     ${row('Média por trade',st.exp==null?'—':usd(st.exp))}
+    ${st.avgR==null?'':row('Média por trade em R',`${st.avgR>=0?'+':''}${st.avgR.toFixed(2)} R${st.costR==null?'':` <small>(custos ${st.costR.toFixed(2)} R)</small>`} <small>· ${st.nR} trades</small>`)}
     ${row('Melhor / pior',st.n?`${usd(st.best)} / ${usd(st.worst)}`:'—')}
     ${row('Pior queda',(st.maxDD*100).toFixed(1)+'%')}
     ${reasons?`<div class="sub">POR SAÍDA</div><table><tbody>${reasons}</tbody></table>`:''}

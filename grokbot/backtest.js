@@ -1,10 +1,16 @@
 /* DOLLOS · TESTE HISTÓRICO do Macro Desk (motor puro).
    Corre as MESMAS regras do Macro Desk ao vivo (strategy.js) sobre velas passadas, com a mesma conta, o mesmo risco por trade,
    o mesmo limite de alavancagem, os mesmos custos e as mesmas paragens de proteção (-20% desde o máximo, -5% num dia).
-   Convenções (conservadoras): entra ao fecho da vela do sinal; stop e alvo avaliam-se com o máximo/mínimo da vela seguinte;
-   se o stop e o alvo cabem na mesma vela, conta o stop; saltos (gap) enchem ao preço de abertura.
+   Convenções (conservadoras, iguais à execução real):
+   - o sinal nasce ao FECHO de uma vela; a ordem a mercado só pode ser enviada depois, por isso enche à ABERTURA da vela seguinte,
+     com taxa (costBps) e slippage (slipBps) contra nós;
+   - stop e alvo avaliam-se com o máximo/mínimo de cada vela; se o stop e o alvo cabem na mesma vela, conta o stop;
+   - o stop é uma ordem de gatilho a mercado: saltos (gap) enchem à abertura e pagam taxa taker + slippage de stop (slipStopBps);
+   - o alvo é uma ordem limitada na corretora (tpMode:'limit', como a Hyperliquid por omissão): só enche se o preço o ULTRAPASSAR
+     (tocar não chega) e paga taxa maker; com tpMode:'market' (HL_TP_TRIGGER=1) enche ao tocar e paga taker + slippage;
+   - saídas por tempo e paragens fecham a mercado (taker + slippage).
    Ordens limitadas (exec:'maker'): a entrada fica ao preço de fecho da vela do sinal durante UMA vela e só enche se o preço passar
-   para lá dele (tocar não chega); o alvo também é uma ordem limitada (só enche se o preço o ultrapassar); o stop é sempre a mercado.
+   para lá dele (tocar não chega).
    Funding (opcional): cobrado ou recebido de hora a hora sobre o valor da posição, com as taxas reais de cada hora. */
 (function(root){
 const D=(typeof require!=='undefined'&&typeof module!=='undefined'&&module.exports)?require('./strategy.js'):root.DSTRAT;
@@ -15,8 +21,7 @@ function prepCfg(cfgIn,override,strategy){
   let cfg={...cfgIn};
   if(strategy)cfg=D.withStrategy(cfg,strategy);
   cfg={...cfg,...(override||{})};
-  cfg.minATRpct=Math.max(.0005,2*cfg.costBps/1e4);   // mesma regra do macro.js: ATR >= 2x custo
-  return cfg;
+  return cfg;   // o filtro de volatilidade/custo é calculado por strategy.js a partir da própria configuração
 }
 /* funding: { GOLD:[[t,taxa],...] } -> procura por hora; nas horas sem dado usa a média das conhecidas */
 function fundingIndex(fund){
@@ -34,20 +39,24 @@ function fundingIndex(fund){
 function simulate(barsByKey,cfgIn,opts={}){
   const cfg=prepCfg(cfgIn,opts.override,opts.strategy),st=D.make(cfg,opts.nMarkets||3);
   const maker=cfg.exec==='maker',taker=cfg.costBps/1e4,makerFee=(cfg.makerBps??3)/1e4;
+  const slip=(cfg.slipBps||0)/1e4,slipStop=(cfg.slipStopBps??cfg.slipBps??0)/1e4,tpLimit=cfg.tpMode!=='market';
   const FI=fundingIndex(opts.funding);
   const keys=Object.keys(barsByKey).filter(k=>barsByKey[k]&&barsByKey[k].length);
   const ix={},times=new Set();
   for(const k of keys){ix[k]=new Map();barsByKey[k].forEach((b,i)=>{ix[k].set(b.t,i);times.add(b.t)})}
   const timeline=[...times].sort((a,b)=>a-b);
   let cash=cfg.start,peak=cash,top=cash,maxDD=0,halted=null,dayKey='',dayEq=cash,t0=null,tEnd=0;
-  const pos={},pend={},last={},trades=[],curve=[],halts={dd:0,day:0},orders={placed:0,filled:0};let firstHalt=null;
+  const pos={},pend={},qe={},last={},trades=[],curve=[],halts={dd:0,day:0},orders={placed:0,filled:0};let firstHalt=null;
   const unreal=(p,px)=>p.side*(px-p.entry)/p.entry*p.notional;
   const eqNow=()=>{let e=cash;for(const k in pos)e+=unreal(pos[k],last[k])-pos[k].fund;return e};
-  const closeAt=(k,px,t,why,fee=taker)=>{const p=pos[k],fees=p.notional*(p.fee+fee),pnl=unreal(p,px)-p.notional*fee-p.fund;cash+=pnl;
-    trades.push({k,side:p.side,o:p.o,c:t,en:p.entry,ex:px,nt:p.notional,pnl,why,bars:p.held,risk:p.notional*p.sf,costUsd:fees+p.fund,fees,fund:p.fund});delete pos[k]};
-  const flatten=(t,why)=>{for(const k of Object.keys(pos))closeAt(k,last[k],t,why);for(const k of Object.keys(pend))delete pend[k]};
-  const openPos=(k,side,entryPx,fee,o)=>{pos[k]={side,entry:entryPx*(1+side*fee),fee,notional:o.notional,stop:0,tp:null,o:o.t,held:0,sf:o.stopDist/(entryPx*(1+side*fee)),fund:0,fundH:Math.floor(o.t/H),atr:o.atr};
-    const p=pos[k];p.stop=p.entry-side*o.stopDist;if(o.tpDist>0)p.tp=p.entry+side*o.tpDist;p.best=p.entry;return p};
+  // pxRaw: preço de mercado da saída; o slippage piora-o e a taxa sai do resultado. Entrada: p.entry já inclui taxa e slippage.
+  const closeAt=(k,pxRaw,t,why,fee=taker,slipOut=slip)=>{const p=pos[k],px=pxRaw*(1-p.side*slipOut),fees=p.notional*(p.fee+fee),slipUsd=p.notional*(p.slipIn+slipOut),
+    pnl=unreal(p,px)-p.notional*fee-p.fund;cash+=pnl;
+    trades.push({k,side:p.side,o:p.o,c:t,en:p.entry,ex:px,nt:p.notional,pnl,why,bars:p.held,risk:p.notional*p.sf,costUsd:fees+slipUsd+p.fund,fees,slipUsd,fund:p.fund});delete pos[k]};
+  const flatten=(t,why)=>{for(const k of Object.keys(pos))closeAt(k,last[k],t,why);for(const k of Object.keys(pend))delete pend[k];for(const k of Object.keys(qe))delete qe[k]};
+  const openPos=(k,side,refPx,fee,slipIn,o)=>{const entry=refPx*(1+side*(fee+slipIn));
+    pos[k]={side,entry,fee,slipIn,notional:o.notional,stop:0,tp:null,o:o.t,held:0,sf:o.stopDist/entry,fund:0,fundH:Math.floor(o.t/H),atr:o.atr};
+    const p=pos[k];p.stop=entry-side*o.stopDist;if(o.tpDist>0)p.tp=entry+side*o.tpDist;p.best=entry;return p};
 
   for(const t of timeline){
     if(opts.to!=null&&t>=opts.to)break;
@@ -62,19 +71,27 @@ function simulate(barsByKey,cfgIn,opts={}){
       const i=ix[k].get(t);if(i==null)continue;
       const b=barsByKey[k][i],o=pend[k];delete pend[k];
       const long=o.side>0;if(!(long?b.l<o.limit:b.h>o.limit))continue;   // não encheu: cancela
-      orders.filled++;const p=openPos(k,o.side,o.limit,makerFee,{...o,t});
+      orders.filled++;const p=openPos(k,o.side,o.limit,makerFee,0,{...o,t});
       p.fresh=true;   // na vela em que enche só pode sair pelo stop (não se sabe a ordem dos movimentos)
+    }
+    // 1b) ordens a mercado geradas ao fecho da vela anterior: enchem à abertura desta vela, com taxa e slippage
+    for(const k of Object.keys(qe)){
+      const i=ix[k].get(t);if(i==null)continue;
+      const o=qe[k];delete qe[k];if(halted||pos[k])continue;
+      const b=barsByKey[k][i],stopDist=cfg.stopATR*o.atr,tpDist=cfg.tpATR*o.atr;
+      const notional=st.sizeFor(eqNow(),b.o*(1+o.side*(taker+slip)),stopDist);if(!(notional>1))continue;
+      openPos(k,o.side,b.o,taker,slip,{notional,stopDist,tpDist,t,atr:o.atr});
     }
     // 2) saídas (stop, alvo, tempo) com a vela deste instante
     for(const k of keys){
       const i=ix[k].get(t);if(i==null)continue;
       const b=barsByKey[k][i];last[k]=b.c;const p=pos[k];if(!p)continue;
       const long=p.side>0,stopHit=long?b.l<=p.stop:b.h>=p.stop;
-      if(p.fresh){p.fresh=false;if(stopHit)closeAt(k,p.stop,t,'stop-loss');continue}
+      if(p.fresh){p.fresh=false;if(stopHit)closeAt(k,p.stop,t,'stop-loss',taker,slipStop);continue}
       p.held++;
-      const tpHit=p.tp!=null&&(maker?(long?b.h>p.tp:b.l<p.tp):(long?b.h>=p.tp:b.l<=p.tp));
-      if(stopHit)closeAt(k,long?Math.min(p.stop,b.o):Math.max(p.stop,b.o),t,'stop-loss');
-      else if(tpHit)closeAt(k,maker?p.tp:(long?Math.max(p.tp,b.o):Math.min(p.tp,b.o)),t,'take-profit',maker?makerFee:taker);
+      const tpHit=p.tp!=null&&(tpLimit?(long?b.h>p.tp:b.l<p.tp):(long?b.h>=p.tp:b.l<=p.tp));
+      if(stopHit)closeAt(k,long?Math.min(p.stop,b.o):Math.max(p.stop,b.o),t,'stop-loss',taker,slipStop);
+      else if(tpHit)tpLimit?closeAt(k,p.tp,t,'take-profit',makerFee,0):closeAt(k,long?Math.max(p.tp,b.o):Math.min(p.tp,b.o),t,'take-profit',taker,slipStop);
       else if(p.held>=cfg.maxHoldBars)closeAt(k,b.c,t,'time-stop');
       if(pos[k])pos[k].stop=st.trailStop(pos[k],b);   // stop móvel: só vale a partir da vela seguinte
     }
@@ -92,9 +109,8 @@ function simulate(barsByKey,cfgIn,opts={}){
       const sig=st.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));
       if(sig.dir!=='long'&&sig.dir!=='short')continue;
       const b=barsByKey[k][i],side=sig.dir==='long'?1:-1,stopDist=cfg.stopATR*sig.atr,tpDist=cfg.tpATR*sig.atr;
-      const ref=maker?b.c:b.c*(1+side*taker),notional=st.sizeFor(eqNow(),ref,stopDist);if(!(notional>1))continue;
-      if(maker){pend[k]={side,limit:b.c,notional,stopDist,tpDist,t,atr:sig.atr};orders.placed++}
-      else openPos(k,side,b.c,taker,{notional,stopDist,tpDist,t,atr:sig.atr});
+      if(maker){const notional=st.sizeFor(eqNow(),b.c,stopDist);if(!(notional>1))continue;pend[k]={side,limit:b.c,notional,stopDist,tpDist,t,atr:sig.atr};orders.placed++}
+      else qe[k]={side,atr:sig.atr};   // ordem a mercado: só pode ser enviada depois do fecho; enche à abertura seguinte
     }
     curve.push([t,eqNow()]);
   }
@@ -119,7 +135,7 @@ function summarize(res){
   const rStats={avgR,avgGrossR,sdR,tR,costR:avgR==null?null:avgGrossR-avgR,breakEvenWin:res.cfg.tpATR>0?res.cfg.stopATR/(res.cfg.stopATR+res.cfg.tpATR):null};
   return{...rStats,n,wins:w.length,losses:l.length,winRate:n?w.length/n:null,net,netPct:net/start,finalEquity:final,
     pf:gl>0?gw/gl:(gw>0?Infinity:null),avgWin:w.length?gw/w.length:null,avgLoss:l.length?-gl/l.length:null,exp:n?net/n:null,
-    feesUsd:tr.reduce((s,t)=>s+(t.fees||0),0),fundUsd:tr.reduce((s,t)=>s+(t.fund||0),0),
+    feesUsd:tr.reduce((s,t)=>s+(t.fees||0),0),slipUsd:tr.reduce((s,t)=>s+(t.slipUsd||0),0),fundUsd:tr.reduce((s,t)=>s+(t.fund||0),0),
     strategy:res.cfg.strategy||'breakout',exec:res.cfg.exec==='maker'?'maker':'taker',orders:res.orders,
     maxDD:res.maxDD,halts:res.halts,firstHalt:res.firstHalt,from:res.start,to:res.end,days:res.end&&res.start?(res.end-res.start)/864e5:0,
     byMarket:group(t=>t.k),byReason:group(t=>t.why),byMonth:group(t=>new Date(t.c).toISOString().slice(0,7)),
@@ -135,6 +151,8 @@ function runAll(barsByKey,cfg,opts={}){
     run('custo 15 bps (pessimista)',{costBps:15}),
     run('alavancagem 2×',{maxLev:2}),
     run('alavancagem 5×',{maxLev:5}),
+    run('slippage 3× maior',{slipBps:(cfg.slipBps||0)*3||9,slipStopBps:(cfg.slipStopBps??cfg.slipBps??0)*3||15}),
+    run('sem slippage (irreal)',{slipBps:0,slipStopBps:0}),
     run('ordens limitadas (maker)',{exec:'maker'}),
   ];
   return{main,variants,research:research(barsByKey,opts.base||cfg,opts)};   // a comparação parte das regras base, não da estratégia em uso

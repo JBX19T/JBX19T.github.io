@@ -1,4 +1,7 @@
-/* DOLLOS · MACRO DESK — paper trading de OURO, EUR/USD e S&P 500 com preços reais do Lighter.
+/* DOLLOS · MACRO DESK — paper trading de OURO, EUR/USD e S&P 500.
+   Preços e velas da HYPERLIQUID (xyz:GOLD, xyz:SP500, xyz:EUR): os mesmos mercados onde o worker executa e onde o teste histórico corre.
+   (O Lighter, com PAXG e SPY como proxies, continua disponível com ?feed=lighter, mas já não é o padrão: sinais calculados num feed e
+   executados noutro não são comparáveis.) Os sinais usam só VELAS FECHADAS, como o teste histórico.
    Conta fictícia própria (separada da dos memecoins), long/short, stop e take-profit por ATR.
    Nada aqui envia ordens: só lê preços públicos e simula. */
 (()=>{
@@ -9,9 +12,7 @@ const DEMO=new URLSearchParams(location.search).has('demo');
 const CFG={...DSTRAT.DEFAULTS,start:10000,
  ddStop:.20,dayLoss:.05,
   res:'15m',resMs:15*60e3,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
-/* só entra se o alvo (3×ATR) for pelo menos 3× o custo de entrar e sair: ATR >= 2×custo. Com 9 bps isto exige ATR >= 0,18% do preço */
-CFG.minATRpct=Math.max(.0005,2*CFG.costBps/1e4);
-CFG.makerBps=3;   // ordens limitadas (maker): só usado pelo teste histórico; o desk em papel entra a mercado
+/* o filtro de volatilidade/custo é calculado por strategy.js (custo de ida e volta <= 15% do risco da trade), igual ao do teste histórico */
 /* estratégia e tamanho das velas escolhidos no TESTE HISTÓRICO (por omissão: rompimento em velas de 15 min) */
 const STRAT_KEY='dollosStratV1',IV_MS={'15m':9e5,'1h':36e5,'4h':144e5};
 let CHOICE={strategy:'breakout',iv:'15m'};
@@ -29,8 +30,12 @@ const MK=[
   {key:'EURUSD',label:'EUR/USD', note:'EURUSD',match:[/^EURUSD$/i,/^EUR[-_/]?USD/i],dec:5,sim:[1.1240,.00025]},
   {key:'SPX',   label:'S&P 500', note:'SPY',   match:[/^SPY$/i,/^SPX/i,/^US500/i],   dec:2,sim:[760,.0007]},
 ];
+/* origem dos dados: 'hl' (padrão) ou 'lighter' (?feed=lighter ou localStorage dollosFeedV1) */
+let FEED='hl';
+try{const q=new URLSearchParams(location.search).get('feed'),j=localStorage.getItem('dollosFeedV1');if(q==='lighter'||(q==null&&j==='lighter'))FEED='lighter'}catch(e){}
+const HLURL='https://api.hyperliquid.xyz/info',HLC={GOLD:'xyz:GOLD',SPX:'xyz:SP500',EURUSD:'xyz:EUR'};
 const LS_KEY='dollosMacroV1';
-const fresh=()=>({cash:CFG.start,pos:{},hist:[CFG.start],closed:0,wins:0,log:[],peak:CFG.start,halt:null,day:{d:'',eq:CFG.start},trades:[],since:Date.now(),maxDD:0,ddPeak:CFG.start});
+const fresh=()=>({cash:CFG.start,pos:{},hist:[CFG.start],closed:0,wins:0,log:[],peak:CFG.start,halt:null,day:{d:'',eq:CFG.start},trades:[],since:Date.now(),maxDD:0,ddPeak:CFG.start,sigStats:{}});
 let S=fresh();
 if(!DEMO){try{const j=JSON.parse(localStorage.getItem(LS_KEY)||'null');if(j&&j.cash>0)S={...fresh(),...j}}catch(e){}}
 const save=()=>{if(DEMO)return;try{localStorage.setItem(LS_KEY,JSON.stringify(S))}catch(e){}};
@@ -45,16 +50,23 @@ const usd=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const {ema,atr,signal,cost,sizeFor,trailStop,hasTarget}=DSTRAT.make(CFG,MK.length);   // regras em strategy.js, partilhadas com o teste histórico
 function unreal(p,px){return p.side*(px-p.entry)/p.entry*p.notional}
 function equity(){let e=S.cash;for(const k in S.pos){const px=P[k].px;if(px!=null)e+=unreal(S.pos[k],px)}return e}
+const slipIn=()=>(CFG.slipBps||0)/1e4;
+/* custo de saída por motivo: o alvo é uma ordem limitada (taxa maker, sem slippage); o stop paga taxa taker + slippage de stop; o resto sai a mercado */
+function exitCost(why){
+  if(why==='take-profit'&&CFG.tpMode!=='market')return{fee:(CFG.makerBps||0)/1e4,slip:0};
+  return{fee:cost(),slip:((why==='stop-loss'?CFG.slipStopBps:CFG.slipBps)||0)/1e4};
+}
 function open(m,dir,sig){
-  const p=P[m.key],px=p.px,side=dir==='long'?1:-1,entry=px*(1+side*cost()),stopDist=CFG.stopATR*sig.atr;
+  const p=P[m.key],px=p.px,side=dir==='long'?1:-1,entry=px*(1+side*(cost()+slipIn())),stopDist=CFG.stopATR*sig.atr;
   const notional=sizeFor(equity(),entry,stopDist);if(!(notional>1))return;
-  S.pos[m.key]={side,entry,notional,stop:entry-side*stopDist,tp:hasTarget?entry+side*CFG.tpATR*sig.atr:null,atr:sig.atr,best:entry,opened:Date.now(),held:0,why:sig.why};
+  S.pos[m.key]={side,entry,notional,risk:notional*stopDist/entry,stop:entry-side*stopDist,tp:hasTarget?entry+side*CFG.tpATR*sig.atr:null,atr:sig.atr,best:entry,opened:Date.now(),held:0,why:sig.why};
   L('p',`${dir==='long'?'LONG':'SHORT'} ${m.label} ${usd(notional)} @ ${fmtPx(m,entry)} · SL ${fmtPx(m,S.pos[m.key].stop)} · ${hasTarget?'TP '+fmtPx(m,S.pos[m.key].tp):'stop móvel, sem alvo'}`);save();
 }
 function close(m,why){
   const p=S.pos[m.key],px=P[m.key].px;if(!p||px==null)return;
-  const pnl=unreal(p,px)-p.notional*cost();S.cash+=pnl;S.closed++;if(pnl>0)S.wins++;delete S.pos[m.key];
-  S.trades.push({l:m.label,side:p.side,o:p.opened,c:Date.now(),en:p.entry,ex:px,nt:p.notional,pnl,why});if(S.trades.length>500)S.trades.shift();
+  const x=exitCost(why),pxe=px*(1-p.side*x.slip),pnl=unreal(p,pxe)-p.notional*x.fee;S.cash+=pnl;S.closed++;if(pnl>0)S.wins++;delete S.pos[m.key];
+  // risk e custos ficam registados: sem eles não se consegue medir o resultado em R nem quanto os custos pesaram
+  S.trades.push({l:m.label,side:p.side,o:p.opened,c:Date.now(),en:p.entry,ex:pxe,nt:p.notional,pnl,why,risk:p.risk,cost:p.notional*(cost()+slipIn()+x.fee+x.slip)});if(S.trades.length>500)S.trades.shift();
   L(pnl>0?'w':'l',`FECHO ${m.label} ${why} ${pnl>=0?'+':''}${usd(pnl)}`);save();window.RESULTS&&RESULTS.refresh();
 }
 function checkExits(m){
@@ -75,14 +87,26 @@ function guard(){   // proteção de capital: corre a cada atualização de pre�
   }else if(S.halt.kind==='day'&&S.halt.day!==d){S.halt=null;L('p','retomado: novo dia');save()}
 }
 function resume(){S.halt=null;S.peak=equity();S.day={d:today(),eq:equity()};L('p','retomado manualmente');save()}
-function onBar(m){   // corre quando há uma vela nova ou dados novos
+/* só velas FECHADAS entram nos sinais (a vela em formação muda a cada tick e o teste histórico nunca a vê) */
+const barMs=p=>p.src==='ticks'?60e3:CFG.resMs;
+const closedBars=p=>DEMO?p.bars:p.bars.filter(b=>b.t+barMs(p)<=Date.now());
+function onBar(m){   // corre quando fecha uma vela nova
   const p=P[m.key];if(p.px==null)return;
-  const stale=p.src==='lighter'&&p.bars.length&&Date.now()-p.bars[p.bars.length-1].t>CFG.resMs*4;
-  p.sig=stale?{dir:'flat',why:'mercado parado / sem velas novas'}:signal(p.bars);
+  const cb=closedBars(p),lastT=cb.length?cb[cb.length-1].t:0;
+  const stale=!DEMO&&p.src!=='ticks'&&lastT&&Date.now()-lastT>CFG.resMs*4;
+  p.sig=stale?{dir:'flat',why:'mercado parado / sem velas novas'}:signal(cb);
+  const cat=p.sig.dir==='flat'?(/custo/.test(p.sig.why)?'flat:custo':/volatilidade/.test(p.sig.why)?'flat:vol':'flat'):p.sig.dir;   // contagem de sinais: dados para diagnosticar
+  const ss=(S.sigStats??={})[m.key]??={};ss[cat]=(ss[cat]||0)+1;
   if(S.pos[m.key]){const q=S.pos[m.key];q.held++;checkExits(m);
-    if(S.pos[m.key]&&p.bars.length){q.stop=trailStop(q,p.bars[p.bars.length-1]);save()}   // stop móvel (só na estratégia que o usa)
+    if(S.pos[m.key]&&cb.length){q.stop=trailStop(q,cb[cb.length-1]);save()}   // stop móvel (só na estratégia que o usa)
     return}
   if((p.sig.dir==='long'||p.sig.dir==='short')&&S.pos[m.key]==null&&!S.halt)open(m,p.sig.dir,p.sig);
+}
+/* chamado depois de cada atualização de velas: se fechou uma vela nova, decide; senão só vigia saídas */
+function afterCandles(m){
+  const p=P[m.key],cb=closedBars(p),t=cb.length?cb[cb.length-1].t:0;
+  if(t&&t!==p.lastClosedT){const first=p.lastClosedT==null;p.lastClosedT=t;if(!first)onBar(m);else{p.sig=signal(cb);checkExits(m)}}   // no arranque não decide sobre uma vela antiga
+  else checkExits(m);
 }
 
 /* ===== dados: Lighter (REST público) ===== */
@@ -131,18 +155,48 @@ async function pollCandles(m){
                `resolution=${CFG.res}&start_timestamp=${start}&end_timestamp=${end}&count_back=200`];
   for(const q of tries){
     try{const bars=parseCandles(await jf(`${LT}/api/v1/candles?market_id=${p.id}&${q}`));
-      if(bars.length>=5){const prevLast=p.bars.length&&p.src==='lighter'?p.bars[p.bars.length-1].t:0;p.bars=bars.slice(-200);p.src='lighter';p.err='';
-        if(p.bars[p.bars.length-1].t!==prevLast)onBar(m);else if(p.src==='lighter')checkExits(m);return}
+      if(bars.length>=5){p.bars=bars.slice(-200);p.src='lighter';p.err='';afterCandles(m);return}
     }catch(e){p.candleErr=e.message}
   }
   if(p.src!=='lighter'){p.src='ticks'}   // continua com velas de 1 min construídas localmente
+}
+
+/* ===== dados: Hyperliquid (API pública /info) — o mesmo feed do worker e do teste histórico ===== */
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const hlCoin=k=>{try{const m=LIVE.P.hl.st&&LIVE.P.hl.st.markets;if(m&&m[k]&&m[k].coin)return m[k].coin}catch(e){}return HLC[k]};
+async function hlPost(body){
+  let last='';
+  for(let a=0;a<3;a++){
+    try{const r=await fetch(HLURL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+      if(r.status===429){last='429';await sleep(1200*(a+1));continue}
+      if(!r.ok)throw new Error('HTTP '+r.status);return await r.json()}catch(e){last=e.message;if(a<2)await sleep(500)}
+  }
+  throw new Error('hyperliquid '+last);
+}
+async function pollHLPrices(){
+  try{const mids=await hlPost({type:'allMids',dex:'xyz'});
+    for(const m of MK){const p=P[m.key],px=num(mids[hlCoin(m.key)]);
+      if(!(px>0)){p.err='sem preço de '+hlCoin(m.key);continue}
+      p.px=px;p.ts=Date.now();p.err='';p.sym=hlCoin(m.key);p.src='hl';checkExits(m)}
+    guard();
+  }catch(e){MK.forEach(m=>{P[m.key].err=e.message})}
+}
+async function pollHLCandles(m){
+  const p=P[m.key],coin=hlCoin(m.key),end=Date.now();
+  try{const arr=await hlPost({type:'candleSnapshot',req:{coin,interval:CFG.res,startTime:end-CFG.resMs*205,endTime:end}});
+    const bars=(arr||[]).map(x=>({t:+x.t,o:+x.o,h:+x.h,l:+x.l,c:+x.c})).filter(b=>b.t&&b.o>0&&b.h>0&&b.l>0&&b.c>0).sort((a,b)=>a.t-b.t);
+    if(bars.length<5)throw new Error('poucas velas ('+bars.length+')');
+    p.bars=bars.slice(-200);p.src='hl';p.sym=coin;p.err='';
+    const back=Math.round(864e5/CFG.resMs),ref=p.bars[p.bars.length-1-back];if(ref&&p.px)p.chg=(p.px/ref.c-1)*100;
+    afterCandles(m);
+  }catch(e){p.err=e.message}
 }
 
 /* ===== modo demo: preços simulados, mesma lógica ===== */
 function demoInit(){
   MK.forEach(m=>{const p=P[m.key];p.id='demo';p.sym=m.note;let px=m.sim[0],drift=0;const bars=[];let t=Date.now()-130*CFG.resMs;
     for(let i=0;i<130;i++){if(i%25===0)drift=(Math.random()-.45)*m.sim[1]*.5;const o=px;px*=1+drift+(Math.random()-.5)*m.sim[1];bars.push({t,o,h:Math.max(o,px)*(1+Math.random()*m.sim[1]*.3),l:Math.min(o,px)*(1-Math.random()*m.sim[1]*.3),c:px});t+=CFG.resMs}
-    p.bars=bars;p.px=px;p.src='lighter';p.chg=0;p.ts=Date.now();p.drift=drift});
+    p.bars=bars;p.px=px;p.src=FEED;p.chg=0;p.ts=Date.now();p.drift=drift});
 }
 function demoStep(m){
   const p=P[m.key],b=p.bars[p.bars.length-1];if(Math.random()<.08)p.drift=(Math.random()-.47)*m.sim[1]*.9;
@@ -154,8 +208,8 @@ function demoStep(m){
 /* ===== UI ===== */
 function render(){
   const eq=equity(),pnl=eq-CFG.start,body=$m('mkBody');if(!body)return;
-  const live=MK.some(m=>P[m.key].px!=null&&P[m.key].src==='lighter');
-  $m('mkInfo').textContent=DEMO?'DEMO · SIMULADO':MK.every(m=>P[m.key].err&&P[m.key].px==null)?'SEM DADOS':live?'LIGHTER · LIVE':MK.some(m=>P[m.key].px!=null)?'LIGHTER · SÓ PREÇOS':'A LIGAR…';
+  const FN=FEED==='hl'?'HYPERLIQUID':'LIGHTER',live=MK.some(m=>P[m.key].px!=null&&P[m.key].src===FEED);
+  $m('mkInfo').textContent=DEMO?'DEMO · SIMULADO':MK.every(m=>P[m.key].err&&P[m.key].px==null)?'SEM DADOS':live?FN+' · LIVE':MK.some(m=>P[m.key].px!=null)?FN+' · SÓ PREÇOS':'A LIGAR…';
   const cards=MK.map(m=>{const p=P[m.key],pos=S.pos[m.key],s=(p.src==='ticks'&&(!p.sig||p.sig.dir==='wait'))?signal(p.bars):(p.sig||{}),chg=p.chg;
     const upnl=pos&&p.px!=null?unreal(pos,p.px):null;
     const tag=pos?`<b class="${pos.side>0?'up':'dn'}">${pos.side>0?'LONG':'SHORT'}</b>`:`<span class="sg">${({long:'sinal LONG',short:'sinal SHORT',flat:'sem sinal',wait:'a recolher velas'})[s.dir]||'—'}</span>`;
@@ -168,7 +222,7 @@ function render(){
   body.innerHTML=`${S.halt?`<div class="halt">⛔ <b>PARADO</b> · ${S.halt.msg}. Nenhuma entrada nova. <button class="ghost" id="mkResume">RETOMAR</button></div>`:''}<div class="mkg">${cards}</div>
     <div class="mkacc"><span>Saldo <b>${usd(eq)}</b> <span class="${pnl>=0?'up':'dn'}">(${pnl>=0?'+':''}${(pnl/CFG.start*100).toFixed(2)}%)</span></span><span>${S.wins}W ${S.closed-S.wins}L</span><button class="ghost" id="mkReset">REINICIAR</button></div>
     ${rows?`<table><thead><tr><th>Ativo</th><th></th><th>Entrada</th><th>Preço</th><th>SL</th><th>TP</th><th>P/L</th><th></th></tr></thead><tbody id="mkRows">${rows}</tbody></table>`:`<div class="note">Sem posições abertas. Estratégia: <b>${DSTRAT.PRESETS[CFG.strategy].label}</b> em velas de ${CFG.res}.</div>`}
-    <div class="note">Paper trading: conta fictícia de ${usd(CFG.start)}, risco de 1% por trade, estratégia ${DSTRAT.PRESETS[CFG.strategy].label} (velas de ${CFG.res}), stop ${CFG.stopATR}×ATR, ${CFG.tpATR>0?`alvo ${CFG.tpATR}×ATR`:`sem alvo, stop móvel a ${CFG.trailATR}×ATR`}, custo ${CFG.costBps} bps por lado, sem alavancagem acima de ${CFG.maxLev}×. Proteção: se a conta perder ${Math.round(CFG.ddStop*100)}% desde o máximo, fecha tudo e pára; perde ${Math.round(CFG.dayLoss*100)}% num dia, pausa até amanhã (retomar é manual). Ouro e S&P usam proxies do Lighter (PAXG e SPY). O estado fica guardado no telemóvel.</div>`;
+    <div class="note">Paper trading: conta fictícia de ${usd(CFG.start)}, risco de 1% por trade, estratégia ${DSTRAT.PRESETS[CFG.strategy].label} (velas de ${CFG.res}), stop ${CFG.stopATR}×ATR, ${CFG.tpATR>0?`alvo ${CFG.tpATR}×ATR`:`sem alvo, stop móvel a ${CFG.trailATR}×ATR`}, taxa ${CFG.costBps} bps (alvo: ordem limitada ${CFG.makerBps} bps) mais slippage de ${CFG.slipBps} bps (stops ${CFG.slipStopBps} bps), sem alavancagem acima de ${CFG.maxLev}×; só entra se o custo de ida e volta for no máximo ${Math.round(CFG.maxCostR*100)}% do risco. Sinais só em velas fechadas. Proteção: se a conta perder ${Math.round(CFG.ddStop*100)}% desde o máximo, fecha tudo e pára; perde ${Math.round(CFG.dayLoss*100)}% num dia, pausa até amanhã (retomar é manual). ${FEED==='hl'?'Preços e velas da Hyperliquid (xyz:GOLD, xyz:SP500, xyz:EUR): os mesmos mercados onde o worker executa.':'ATENÇÃO: feed do Lighter com proxies (PAXG e SPY), diferente do mercado onde o worker executa.'} O estado fica guardado no telemóvel.</div>`;
 }
 function record(){guard();const e=equity();S.hist.push(e);if(S.hist.length>500)S.hist.shift();save()}
 function bind(){
@@ -182,6 +236,11 @@ function bind(){
 async function start(){
   if(!$m('mkBody'))return;bind();render();
   if(DEMO){demoInit();setInterval(()=>{MK.forEach(demoStep);record();render()},CFG.candlePoll);render();return}
+  if(FEED==='hl'){
+    const loop=async()=>{await pollHLPrices();render()};
+    const cloop=async()=>{for(const m of MK){await pollHLCandles(m);await sleep(250)}record();render()};
+    await loop();await cloop();setInterval(loop,CFG.pricePoll);setInterval(cloop,CFG.candlePoll);return;
+  }
   try{await discover()}catch(e){MK.forEach(m=>P[m.key].err=e.message);L('l','mercados: '+e.message)}
   const loop=async()=>{await Promise.all(MK.map(pollPrice));render()};
   const cloop=async()=>{await Promise.all(MK.map(pollCandles));record();render()};
@@ -189,6 +248,6 @@ async function start(){
   setInterval(()=>MK.forEach(m=>{const p=P[m.key];if(p.src==='ticks'&&p.newBar){p.newBar=false;onBar(m)}}),5000);
 }
 
-window.MACRO={guard,resume,setStrategy,CHOICE,BASE,CFG,MK,P,ema,atr,signal,sizeFor,parseMarkets,pickMarket,parseDetail,parseCandles,state:()=>S,reset:()=>{S=fresh()},equity,unreal,open:(k,d,s)=>open(MK.find(m=>m.key===k),d,s),close:k=>close(MK.find(m=>m.key===k),'teste'),setPrice:(k,px)=>{P[k].px=px},checkExits:k=>checkExits(MK.find(m=>m.key===k))};
+window.MACRO={guard,resume,setStrategy,CHOICE,BASE,CFG,MK,P,onBar:k=>onBar(MK.find(m=>m.key===k)),afterCandles:k=>afterCandles(MK.find(m=>m.key===k)),closedBars:k=>closedBars(P[k]),pollHLPrices,pollHLCandles:k=>pollHLCandles(MK.find(m=>m.key===k)),feed:()=>FEED,exitCost,ema,atr,signal,sizeFor,parseMarkets,pickMarket,parseDetail,parseCandles,state:()=>S,reset:()=>{S=fresh()},equity,unreal,open:(k,d,s)=>open(MK.find(m=>m.key===k),d,s),close:k=>close(MK.find(m=>m.key===k),'teste'),setPrice:(k,px)=>{P[k].px=px},checkExits:k=>checkExits(MK.find(m=>m.key===k))};
 start();
 })();

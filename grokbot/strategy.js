@@ -10,7 +10,18 @@
                           períodos abaixo de 10 -> long; o inverso -> short. Alvo curto, saída rápida (estilo Connors) */
 (function(root){
 /* parâmetros comuns (os mesmos do Macro Desk e do piloto automático do worker) */
-const DEFAULTS={riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:9,maxATRpct:.03};
+/* maxCostR: o custo de ida e volta não pode passar de 15% do risco da trade (1 R). Regra fixada ANTES de ver resultados, por convenção:
+   com stops curtos (ATR baixo) o mesmo custo em % vale muitos R (custo_R = 2×custo / distância do stop). Não é um parâmetro afinado.
+   slipBps / slipStopBps: slippage assumido por lado em ordens a mercado / em stops (SUPOSIÇÃO a substituir pelo medido: ver execLog do worker).
+   makerBps: taxa das ordens limitadas (alvo). tpMode: 'limit' (como na Hyperliquid, HL_TP_TRIGGER por omissão desligado) ou 'market'. */
+const DEFAULTS={riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:9,maxATRpct:.03,
+  maxCostR:.15,slipBps:3,slipStopBps:5,makerBps:3,tpMode:'limit'};
+/* ATR mínimo (em % do preço) para a trade valer a pena: custo de ida e volta <= maxCostR × risco. Um minATRpct explícito na configuração tem prioridade. */
+function minATRpct(CFG){
+  if(Number.isFinite(CFG.minATRpct))return CFG.minATRpct;
+  const cost=(CFG.costBps||0)/1e4,stop=CFG.stopATR>0?CFG.stopATR:2,mc=CFG.maxCostR>0?CFG.maxCostR:DEFAULTS.maxCostR;
+  return Math.max(.0005,2*cost/(stop*mc));
+}
 const PRESETS={
   breakout:{label:'Rompimento (original)',short:'rompimento',p:{}},
   reversion:{label:'Reversão à média',short:'reversão',p:{bandN:20,band:2,stopATR:2,tpATR:2}},
@@ -29,7 +40,9 @@ function make(CFG,nMarkets=3){
   const kind=PRESETS[CFG.strategy]?CFG.strategy:'breakout';
   const ema=(a,n)=>{if(a.length<n)return null;const k=2/(n+1);let e=a.slice(0,n).reduce((s,v)=>s+v,0)/n;for(let i=n;i<a.length;i++)e=a[i]*k+e*(1-k);return e};
   const atr=(bars,n)=>{if(bars.length<n+1)return null;let s=0;for(let i=bars.length-n;i<bars.length;i++){const b=bars[i],pc=bars[i-1].c;s+=Math.max(b.h-b.l,Math.abs(b.h-pc),Math.abs(b.l-pc))}return s/n};
-  const volFilter=(a,px)=>{const ap=a/px;if(ap<CFG.minATRpct)return'volatilidade muito baixa';if(ap>CFG.maxATRpct)return'volatilidade extrema';return null};
+  const volFilter=(a,px)=>{const ap=a/px,mn=minATRpct(CFG);
+    if(ap<mn){const cr=2*(CFG.costBps||0)/1e4/((CFG.stopATR||2)*ap);return cr>(CFG.maxCostR||DEFAULTS.maxCostR)?`custo ${cr.toFixed(2)} R por trade (máx. ${CFG.maxCostR||DEFAULTS.maxCostR})`:'volatilidade muito baixa'}
+    if(ap>CFG.maxATRpct)return'volatilidade extrema';return null};
   /* tendência (EMA rápida vs lenta) + rompimento do máximo/mínimo das últimas N velas + filtro de volatilidade */
   const breakout=bars=>{
     const need=Math.max(CFG.slow,CFG.brk+1,CFG.atrN+1)+1;
@@ -96,6 +109,6 @@ const APPROVAL_DAYS=45;
 function approvalOk(a,strategy,iv,now=Date.now()){
   return !!(a&&a.strategy===strategy&&a.iv===iv&&a.at>0&&now-a.at<=APPROVAL_DAYS*864e5&&now>=a.at-6e5&&a.n>=30&&a.avgR>0&&a.pf>1.1&&a.tR>=2);
 }
-const api={make,PRESETS,withStrategy,DEFAULTS,approvalOk,APPROVAL_DAYS};
+const api={make,PRESETS,withStrategy,DEFAULTS,approvalOk,APPROVAL_DAYS,minATRpct};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSTRAT=api;
 })(typeof window!=='undefined'?window:globalThis);

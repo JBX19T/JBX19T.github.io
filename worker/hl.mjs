@@ -8,6 +8,7 @@
 //   Limites:    HL_MAX_ORDER_USD (15)  HL_MAX_GROSS_USD (30)  HL_MIN_ORDER_USD (10)  HL_SLIPPAGE_BPS (50)  HL_LEVERAGE (3)
 //   Mercados:   HL_DEXES (xyz)   HL_MARKETS = {"GOLD":"xyz:GOLD",...} para fixar os nomes exatos
 //   Alvo:       por omissão é uma ordem limitada reduce-only (paga a taxa de maker, mais baixa); HL_TP_TRIGGER=1 volta ao alvo a mercado
+//   Proteção:   HL_DEFAULT_STOP_PCT (0.02) = stop de emergência para uma posição que apareça sem stop
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { encode as mpEncode } from '@msgpack/msgpack';
@@ -69,6 +70,12 @@ export const MARKET_KEYS = Object.keys(MARKET_PATTERNS);
 // o preço tem de fazer sentido para o ativo (evita apanhar, por nome, uma memecoin do mercado principal como se fosse o S&P 500)
 export const PLAUSIBLE = { GOLD: [300, 30000], SPX: [500, 60000], EURUSD: [0.5, 2] };
 const num = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : d; };
+// Reconhece o stop de uma posição pela GEOMETRIA (gatilho abaixo do preço numa posição longa, acima numa curta), não pelo texto de orderType,
+// cujo valor exato não está verificado. Ordens sem os campos esperados contam como "formato desconhecido" (nunca se empilham stops por cima).
+const trigPx = o => { const v = parseFloat(o.triggerPx); return Number.isFinite(v) && v > 0 ? v : null; };
+const isTriggerOrder = o => o.isTrigger === true || trigPx(o) != null;
+const isStopOf = (o, isLong, mid) => isTriggerOrder(o) && !/take|tp/i.test(o.orderType || '') && trigPx(o) != null && (isLong ? trigPx(o) < mid : trigPx(o) > mid);
+const unknownShape = o => o.isTrigger === undefined && o.triggerPx === undefined;
 const ADDR = /^0x[0-9a-fA-F]{40}$/;
 let lastNonce = 0;
 const nextNonce = () => (lastNonce = Math.max(Date.now(), lastNonce + 1));
@@ -153,7 +160,11 @@ export function makeHL(env, f = fetch) {
         const a = await accountOf(dx);
         out.account[dx || 'main'] = a.equity;
         const mine = new Set(Object.values(d.resolved).filter(Boolean).map(c => c.coin));
-        out.positions.push(...a.positions.filter(p => mine.has(p.coin)));
+        for (const p of a.positions.filter(p => mine.has(p.coin))) {
+          const c = [...Object.values(d.resolved)].find(x => x && x.coin === p.coin), os = a.orders.filter(o => o.coin === p.coin);
+          const stop = c && c.mid ? os.find(o => isStopOf(o, p.szi > 0, c.mid)) : null;
+          out.positions.push({ ...p, stop: stop ? trigPx(stop) : null, orders: os.length, ordersShapeUnknown: os.some(unknownShape) });
+        }
         out.openOrders += a.orders.filter(o => mine.has(o.coin)).length;
       }
     }
@@ -161,11 +172,15 @@ export function makeHL(env, f = fetch) {
   }
 
   const slipPx = (mid, isBuy, sd) => roundPx(mid * (1 + (isBuy ? 1 : -1) * caps.slipBps / 1e4), sd);
+  const defaultStopPct = Math.min(Math.max(num(env.HL_DEFAULT_STOP_PCT, 0.02), 0.005), 0.1);
+  // preço médio realmente executado vs preço de referência (mid): é isto que mede o slippage real de cada ordem
+  const fillInfo = (s0, isBuy, mid) => { const f = s0 && s0.filled; if (!f) return {}; const avg = parseFloat(f.avgPx), sz = parseFloat(f.totalSz); return { mid, avgPx: avg, filledSz: sz, slipBps: Number.isFinite(avg) && mid ? +(((isBuy ? 1 : -1) * (avg - mid) / mid) * 1e4).toFixed(2) : null }; };
 
   // desired: { GOLD:{side:'long'|'short', frac, slPct, tpPct, slPx}, ... }  frac = posição / saldo do Macro Desk
   //   tpPct null = sem alvo (estratégia de stop móvel)   slPx = stop atual pedido pelo desk (sobe/desce com o stop móvel)
   // blockOpen: motivo para não abrir nada (ex.: parado pela proteção do servidor)
-  async function sync(desired = {}, { flattenAll = false, blockOpen = null } = {}) {
+  // keepHeld: nunca fecha por "não estar desejado" as posições existentes; só garante que têm stop (usado pela proteção do servidor)
+  async function sync(desired = {}, { flattenAll = false, blockOpen = null, keepHeld = false } = {}) {
     const d = await discover();
     const res = { network, mode: live ? 'real' : 'simulacao', plan: [], results: [], skipped: [] };
     const accounts = {};
@@ -173,10 +188,12 @@ export function makeHL(env, f = fetch) {
     let gross = 0;
     for (const k of MARKET_KEYS) { const c = d.resolved[k]; if (!c) continue; const a = await acct(c.dex); const p = a.positions.find(x => x.coin === c.coin); if (p && c.mid) gross += Math.abs(p.szi) * c.mid; }
     for (const k of MARKET_KEYS) {
-      const c = d.resolved[k], want = flattenAll ? null : desired[k];
+      const c = d.resolved[k];
+      let want = flattenAll ? null : desired[k];
       if (!c) { if (want) res.skipped.push({ market: k, reason: 'mercado não encontrado na Hyperliquid' }); continue; }
       if (!c.mid) { res.skipped.push({ market: k, reason: 'sem preço' }); continue; }
       const a = await acct(c.dex), pos = a.positions.find(x => x.coin === c.coin && x.szi !== 0);
+      if (!want && keepHeld && !flattenAll && pos) want = { side: pos.szi > 0 ? 'long' : 'short', frac: 0, slPct: defaultStopPct };
       const myOrders = a.orders.filter(o => o.coin === c.coin);
       // 1) ordens órfãs (stops de uma posição que já não existe)
       if (!pos && myOrders.length) {
@@ -191,7 +208,7 @@ export function makeHL(env, f = fetch) {
         if (live) {
           const r = await post({ type: 'order', orders: [orderWire(c.asset, isBuy, px, sz, true, ioc)], grouping: 'na' });
           const s0 = statuses(r) && statuses(r)[0];
-          res.results.push({ op: 'close', market: k, ok: !!(s0 && s0.filled), detail: s0 || r });
+          res.results.push({ op: 'close', market: k, ok: !!(s0 && s0.filled), detail: s0 || r, ...fillInfo(s0, isBuy, c.mid) });
           if (s0 && s0.filled && myOrders.length) await post({ type: 'cancel', cancels: myOrders.map(o => ({ a: c.asset, o: o.oid })) });
         }
         gross -= sz * c.mid;
@@ -200,18 +217,22 @@ export function makeHL(env, f = fetch) {
       // 2b) posição mantida: aperta o stop móvel, ou repõe o stop se faltar (nunca deixa uma posição sem stop)
       if (pos && want) {
         const isLong = pos.szi > 0, sz = Math.abs(pos.szi);
-        const sls = myOrders.filter(o => o.isTrigger && /stop/i.test(o.orderType || ''));
-        const cur = sls.length ? parseFloat(sls[0].triggerPx) : null;
+        const sls = myOrders.filter(o => isStopOf(o, isLong, c.mid));
+        const cur = sls.length ? Math.max(...sls.map(trigPx).map(v => (isLong ? v : -v))) * (isLong ? 1 : -1) : null;   // o stop mais apertado
+        if (cur == null && myOrders.some(unknownShape)) {   // não se sabe ler as ordens da corretora: não se empilham stops por cima de ordens que talvez já protejam
+          res.skipped.push({ market: k, reason: 'formato das ordens da corretora desconhecido: não repõe o stop sozinho (confirma na Hyperliquid)' });
+          continue;
+        }
         let target = want.slPx > 0 ? want.slPx : null;
-        if (cur == null && target == null) { const pct = Math.min(Math.max(want.slPct || 0.02, 0.002), 0.2); target = (pos.entryPx || c.mid) * (isLong ? 1 - pct : 1 + pct); }
+        if (cur == null && target == null) { const pct = Math.min(Math.max(want.slPct || defaultStopPct, 0.002), 0.2); target = (pos.entryPx || c.mid) * (isLong ? 1 - pct : 1 + pct); }
         if (target != null) {
           target = roundPx(target, c.szDecimals);
           const valid = isLong ? target < c.mid * 0.999 : target > c.mid * 1.001;
           const tighter = cur == null || (isLong ? target > cur * 1.001 : target < cur * 0.999);
           if (cur == null && !valid) {   // sem stop e o preço já passou o nível do stop: fecha
             const px = slipPx(c.mid, !isLong, c.szDecimals);
-            res.plan.push({ op: 'close', market: k, coin: c.coin, side: isLong ? 'sell' : 'buy', sz, px, motivo: 'sem stop e preço além do stop' });
-            if (live) { const r = await post({ type: 'order', orders: [orderWire(c.asset, !isLong, px, sz, true, ioc)], grouping: 'na' }); const s0 = statuses(r) && statuses(r)[0]; res.results.push({ op: 'close', market: k, ok: !!(s0 && s0.filled), detail: s0 || r }); }
+            res.plan.push({ op: 'close', market: k, coin: c.coin, side: isLong ? 'sell' : 'buy', sz, px, mid: c.mid, motivo: 'sem stop e preço além do stop' });
+            if (live) { const r = await post({ type: 'order', orders: [orderWire(c.asset, !isLong, px, sz, true, ioc)], grouping: 'na' }); const s0 = statuses(r) && statuses(r)[0]; res.results.push({ op: 'close', market: k, ok: !!(s0 && s0.filled), detail: s0 || r, motivo: 'sem stop', ...fillInfo(s0, !isLong, c.mid) }); }
           } else if (valid && tighter) {
             const op = cur == null ? 'stop' : 'trail';
             res.plan.push({ op, market: k, coin: c.coin, from: cur, to: target });
@@ -238,7 +259,7 @@ export function makeHL(env, f = fetch) {
         const noTp = want.tpPct === null || want.tpPct === 0;   // estratégia de stop móvel: sem alvo
         const slPct = Math.min(Math.max(want.slPct || 0.01, 0.002), 0.2), tpPct = Math.min(Math.max(want.tpPct || 0.015, 0.002), 0.5);
         const sl = roundPx(c.mid * (isBuy ? 1 - slPct : 1 + slPct), c.szDecimals), tp = noTp ? null : roundPx(c.mid * (isBuy ? 1 + tpPct : 1 - tpPct), c.szDecimals);
-        res.plan.push({ op: 'open', market: k, coin: c.coin, side: isBuy ? 'buy' : 'sell', sz, px, usd: +(sz * px).toFixed(2), leverage: lev, sl, tp });
+        res.plan.push({ op: 'open', market: k, coin: c.coin, side: isBuy ? 'buy' : 'sell', sz, px, mid: c.mid, usd: +(sz * px).toFixed(2), leverage: lev, sl, tp });
         gross += sz * px;
         if (live) {
           // outra sincronização (ex.: a app aberta em dois aparelhos) pode ter aberto entretanto: confirma antes de enviar
@@ -258,10 +279,10 @@ export function makeHL(env, f = fetch) {
           if (!ps || ps.some(x => x.error)) {   // sem stop não há posição: fecha logo
             const cpx = slipPx(c.mid, !isBuy, c.szDecimals);
             const cl = await post({ type: 'order', orders: [orderWire(c.asset, !isBuy, cpx, fsz, true, ioc)], grouping: 'na' });
-            res.results.push({ op: 'open', market: k, ok: false, detail: { motivo: 'stop não aceite; posição fechada', prot, fechado: statuses(cl) } });
+            res.results.push({ op: 'open', market: k, ok: false, detail: { motivo: 'stop não aceite; posição fechada', prot, fechado: statuses(cl) }, ...fillInfo(s0, isBuy, c.mid) });
             continue;
           }
-          res.results.push({ op: 'open', market: k, ok: true, filled: s0.filled, stops: ps });
+          res.results.push({ op: 'open', market: k, ok: true, filled: s0.filled, stops: ps, usd: +(fsz * (parseFloat(s0.filled.avgPx) || px)).toFixed(2), ...fillInfo(s0, isBuy, c.mid) });
         }
       }
     }
@@ -285,6 +306,19 @@ export function makeHL(env, f = fetch) {
     return { interval, start, end, markets, rejected: d.rejected };
   }
 
+  // execuções reais da conta nos 3 mercados, com a taxa efetivamente cobrada (taker = ordem que atravessou o livro). Serve para MEDIR o custo
+  // por lado que o backtest assume (9 bps taker / 3 bps maker): o campo `fee` de cada execução vem da corretora, não é estimado.
+  // (Os nomes dos campos de userFills seguem a documentação da Hyperliquid mas não foram verificados contra a API real nesta sessão.)
+  async function fills(limit = 200) {
+    if (!ADDR.test(env.HL_ACCOUNT || '')) throw new Error('HL_ACCOUNT em falta ou inválido');
+    const [arr, d] = await Promise.all([info({ type: 'userFills', user: env.HL_ACCOUNT }), discover()]);
+    const mine = new Set(Object.values(d.resolved).filter(Boolean).map(c => c.coin));
+    const rows = (Array.isArray(arr) ? arr : []).filter(x => mine.has(x.coin)).slice(0, limit)
+      .map(x => ({ t: x.time, coin: x.coin, side: x.side, px: +x.px, sz: +x.sz, fee: +x.fee, taker: !!x.crossed, pnl: +x.closedPnl })).filter(x => x.px > 0 && x.sz > 0 && Number.isFinite(x.fee));
+    const bps = a => { const nt = a.reduce((t, x) => t + x.px * x.sz, 0); return nt > 0 ? +((a.reduce((t, x) => t + x.fee, 0) / nt) * 1e4).toFixed(2) : null; };
+    return { n: rows.length, takerBps: bps(rows.filter(x => x.taker)), makerBps: bps(rows.filter(x => !x.taker)), nTaker: rows.filter(x => x.taker).length, nMaker: rows.filter(x => !x.taker).length, rows: rows.slice(0, 50) };
+  }
+
   const flatten = () => sync({}, { flattenAll: true });
-  return { state, sync, flatten, discover, candles, caps, live, network };
+  return { state, sync, flatten, discover, candles, fills, caps, live, network };
 }

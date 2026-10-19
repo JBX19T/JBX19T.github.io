@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import worker from '../holders.mjs';
-const env = { ALLOWED_ORIGIN: 'https://jbx19t.github.io,https://localhost', APP_TOKEN: 'segredo', HL_AGENT_KEY: '0x' + '22'.repeat(32), HL_ACCOUNT: '0x' + '33'.repeat(20), SOL_KEY: undefined };
+const env = { ALLOWED_ORIGIN: 'https://jbx19t.github.io,https://localhost', APP_TOKEN: 'segredo', HL_AGENT_KEY: '0x' + '22'.repeat(32), HL_ACCOUNT: '0x' + '33'.repeat(20), SOL_KEY: undefined, HL_REQUIRE_APPROVAL: '0' };   // rede de teste: a aprovação não é exigida aqui (os testes de aprovação estão em audit.test.mjs)
 globalThis.fetch = async (u, o = {}) => {
   const b = o.body ? JSON.parse(o.body) : {}, R = j => ({ ok: true, status: 200, json: async () => j, text: async () => JSON.stringify(j) });
   if (String(u).endsWith('/info')) {
@@ -86,7 +86,7 @@ console.log('alpaca removida ok');
   st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'reversion' } })).json(); assert.equal(st.autopilot.strategy, 'reversion');
   // aprovação do teste histórico: o worker volta a verificar os números
   r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 12, avgR: .3, pf: 1.5, tR: 2.5 } }); assert.equal(r.status, 400);
-  r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 40, avgR: .2, pf: 1.3, tR: 2.4, at: 1 } }); assert.equal(r.status, 200);
+  r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 40, avgR: .2, pf: 1.3, tR: 2.4, at: Date.now() - 1000 } }); assert.equal(r.status, 200);
   st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'trail', HL_INTERVAL: '4h' } })).json(); assert.equal(st.autopilot.approved, true);
   st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'trail', HL_INTERVAL: '1h' } })).json(); assert.equal(st.autopilot.approved, false);
   // worker antigo sem memória: tudo continua a funcionar, só a proteção fica desligada

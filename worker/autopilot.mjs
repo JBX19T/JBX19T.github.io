@@ -22,7 +22,6 @@ export async function runAutopilot({ env, hl, store, notify, now = Date.now(), s
   if (!A.on || !hl) return null;
   if (!force && now % A.ms > WINDOW_MS) return { waiting: true };
   const cfg = DS.withStrategy({ ...DS.DEFAULTS }, A.strategy);
-  cfg.minATRpct = Math.max(0.0005, 2 * cfg.costBps / 1e4);
   const S = DS.make(cfg, MARKET_KEYS.length);
   st ??= await hl.state();
   const c = await hl.candles(A.iv, Math.ceil(210 * A.ms / 864e5));

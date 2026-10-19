@@ -6,14 +6,14 @@ const DS = require('../../grokbot/strategy.js');
 const approx = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg || ''} ${a} !~ ${b}`);
 
 // parâmetros pequenos para fazer contas à mão
-const cfg = { start: 10000, riskPct: .01, maxLev: 5, fast: 3, slow: 6, brk: 3, atrN: 3, stopATR: 2, tpATR: 3, maxHoldBars: 10, costBps: 0, ddStop: .5, dayLoss: .5, maxATRpct: .03 };
+const cfg = { start: 10000, riskPct: .01, maxLev: 5, fast: 3, slow: 6, brk: 3, atrN: 3, stopATR: 2, tpATR: 3, maxHoldBars: 10, costBps: 0, makerBps: 0, ddStop: .5, dayLoss: .5, maxATRpct: .03 };
 const T0 = Date.UTC(2026, 0, 5, 0, 0);
 const flat = (n, t0 = 0) => Array.from({ length: n }, (_, i) => ({ t: T0 + (t0 + i) * 9e5, o: 100, h: 100.1, l: 99.9, c: 100 }));
 const bar = (i, o, h, l, c) => ({ t: T0 + i * 9e5, o, h, l, c });
 
 // 1) cálculo à mão: rompimento a 101, alvo a 102.6, ganho = 1.5R = $150
 {
-  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 101.2, 102.7, 101, 102.5), ...flat(5, 22).map(b => ({ ...b, o: 102.5, h: 102.6, l: 102.4, c: 102.5 }))];
+  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 101, 102.7, 101, 102.5), ...flat(5, 22).map(b => ({ ...b, o: 102.5, h: 102.6, l: 102.4, c: 102.5 }))];
   const r = BT.simulate({ GOLD: bars }, cfg);
   const t = r.trades[0];
   assert.equal(t.k, 'GOLD'); assert.equal(t.side, 1); assert.equal(t.why, 'take-profit');
@@ -24,7 +24,8 @@ const bar = (i, o, h, l, c) => ({ t: T0 + i * 9e5, o, h, l, c });
 }
 // 2) salto (gap) abaixo do stop: enche à abertura, pior que o stop
 {
-  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 99, 99.5, 98.5, 99.2), ...flat(3, 22).map(b => ({ ...b, o: 99.2, h: 99.3, l: 99.1, c: 99.2 }))];
+  // a ordem entra à abertura da vela 21 (101); na vela 22 o preço salta para 99, abaixo do stop (~99,93): enche à abertura
+  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 101, 101.3, 100.9, 101.1), bar(22, 99, 99.5, 98.5, 99.2), ...flat(3, 23).map(b => ({ ...b, o: 99.2, h: 99.3, l: 99.1, c: 99.2 }))];
   const t = BT.simulate({ GOLD: bars }, cfg).trades[0];
   assert.equal(t.why, 'stop-loss'); approx(t.ex, 99, 1e-9, 'enche à abertura do gap');
   assert.ok(t.pnl < -100, 'perda maior do que 1R por causa do gap: ' + t.pnl);
@@ -38,8 +39,8 @@ const bar = (i, o, h, l, c) => ({ t: T0 + i * 9e5, o, h, l, c });
 }
 // 4) custos: cada lado custa costBps do valor da posição
 {
-  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 101.2, 102.7, 101, 102.5), ...flat(5, 22).map(b => ({ ...b, o: 102.5, h: 102.6, l: 102.4, c: 102.5 }))];
-  const a = BT.simulate({ GOLD: bars }, cfg).trades[0], b = BT.simulate({ GOLD: bars }, { ...cfg, costBps: 9 }).trades[0];
+  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 101, 102.7, 101, 102.5), ...flat(5, 22).map(b => ({ ...b, o: 102.5, h: 102.6, l: 102.4, c: 102.5 }))];
+  const a = BT.simulate({ GOLD: bars }, cfg).trades[0], b = BT.simulate({ GOLD: bars }, { ...cfg, costBps: 9, makerBps: 9, minATRpct: 0 }).trades[0];
   assert.ok(b.pnl < a.pnl); console.log('ok   4 custo de 9 bps reduz o ganho: $' + a.pnl.toFixed(2) + ' -> $' + b.pnl.toFixed(2));
 }
 // 5) paragem de capital: com limite mínimo fecha tudo e conta a paragem
@@ -57,7 +58,7 @@ function walk(seed, n, drift, vol, p0 = 100) {
 }
 const liveCfg = { start: 10000, riskPct: .01, maxLev: 5, fast: 20, slow: 50, brk: 20, atrN: 14, stopATR: 2, tpATR: 3, maxHoldBars: 96, costBps: 9, ddStop: .2, dayLoss: .05, maxATRpct: .03 };
 {
-  const data = { GOLD: walk(1, 4000, .0001, .003), SPX: walk(2, 4000, 0, .003), EURUSD: walk(3, 4000, 0, .002, 1.12) };
+  const data = { GOLD: walk(1, 4000, .0001, .012), SPX: walk(2, 4000, 0, .012), EURUSD: walk(3, 4000, 0, .012, 1.12) };
   const r1 = BT.simulate(data, liveCfg), r2 = BT.simulate(data, liveCfg);
   assert.deepEqual(r1.trades, r2.trades); console.log('ok   6a determinístico (' + r1.trades.length + ' trades)');
   const s = BT.summarize(r1);
@@ -67,8 +68,8 @@ const liveCfg = { start: 10000, riskPct: .01, maxLev: 5, fast: 20, slow: 50, brk
   const worst = Math.min(...stops.map(t => t.pnl), 0);
   assert.ok(worst > -10000 * 0.02, 'perdas de stop ficam perto de 1% (sem saltos): ' + worst.toFixed(2));
   console.log('ok   6b equity final = 10000 + soma dos P/L; pior stop $' + worst.toFixed(2));
-  const all = BT.runAll(data, liveCfg); assert.equal(all.variants.length, 5); assert.ok(all.main.s.n >= 0);
-  console.log('ok   6c runAll devolve principal + 5 variantes:', all.variants.map(v => v.label + ' ' + v.s.n + ' trades').join(' | '));
+  const all = BT.runAll(data, liveCfg); assert.equal(all.variants.length, 7); assert.ok(all.main.s.n >= 0);
+  console.log('ok   6c runAll devolve principal + 7 variantes:', all.variants.map(v => v.label + ' ' + v.s.n + ' trades').join(' | '));
 }
 // 7) tendência forte e limpa: a estratégia tem de ganhar (sinal de que a lógica está do lado certo)
 {
@@ -91,10 +92,10 @@ console.log('backtest ok');
 }
 // 10) métricas em R: o caso à mão vale exatamente 1.5 R; com 9 bps os custos aparecem em R
 {
-  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 101.2, 102.7, 101, 102.5), ...flat(5, 22).map(b => ({ ...b, o: 102.5, h: 102.6, l: 102.4, c: 102.5 }))];
+  const bars = [...flat(20), bar(20, 100, 101.2, 100, 101), bar(21, 101, 102.7, 101, 102.5), ...flat(5, 22).map(b => ({ ...b, o: 102.5, h: 102.6, l: 102.4, c: 102.5 }))];
   const r = BT.simulate({ GOLD: bars }, cfg); const t = r.trades[0];
   approx(t.risk, 100, 1e-6, 'risco = 1% da conta'); approx(t.pnl / t.risk, 1.5, 1e-9, '1.5 R');
-  const s9 = BT.summarize(BT.simulate({ GOLD: bars }, { ...cfg, costBps: 9 }));
+  const s9 = BT.summarize(BT.simulate({ GOLD: bars }, { ...cfg, costBps: 9, makerBps: 9, minATRpct: 0 }));
   assert.ok(s9.costR > 0.1 && s9.costR < 0.3, 'custo em R ' + s9.costR); approx(s9.breakEvenWin, 0.4, 1e-12, 'empate a 40%');
   approx(s9.avgGrossR - s9.costR, s9.avgR, 1e-12, 'R líquido = bruto - custos');
   console.log('ok   10 R: caso à mão 1.5 R; custo de 9 bps = ' + s9.costR.toFixed(3) + ' R; empate a 40%');
@@ -106,10 +107,10 @@ console.log('backtest ok');
   const r1 = BT.simulate({ GOLD: touch }, { ...cfg, exec: 'maker' });
   assert.ok(!r1.trades.some(t => t.o === T0 + 21 * 9e5), 'tocar no limite não enche'); assert.ok(r1.orders.placed > r1.orders.filled);
   const through = [...flat(20), up(20, 100, 101.2, 100, 101), up(21, 101, 101.3, 100.9, 101.2), up(22, 101.2, 102.7, 101.1, 102.5), ...flat(5, 23).map(b => ({ ...b, o: 102.5, h: 102.6, l: 102.4, c: 102.5 }))];
-  const r2 = BT.simulate({ GOLD: through }, { ...cfg, exec: 'maker', makerBps: 3, costBps: 9 }); const t = r2.trades[0];
+  const r2 = BT.simulate({ GOLD: through }, { ...cfg, exec: 'maker', makerBps: 3, costBps: 9, minATRpct: 0 }); const t = r2.trades[0];
   assert.ok(r2.orders.filled >= 1); assert.equal(t.o, T0 + 21 * 9e5); assert.equal(t.why, 'take-profit');
   approx(t.en, 101 * 1.0003, 1e-9, 'entrada ao limite + taxa maker'); approx(t.fees, t.nt * 0.0006, 1e-9, 'entrada e alvo com taxa maker');
-  const rt = BT.simulate({ GOLD: through }, { ...cfg, costBps: 9 }).trades[0];
+  const rt = BT.simulate({ GOLD: through }, { ...cfg, costBps: 9, minATRpct: 0 }).trades[0];
   assert.ok(t.fees < rt.fees, 'limitadas pagam menos taxas'); console.log('ok   11 limitadas: tocar não enche; atravessar enche; taxas $' + t.fees.toFixed(2) + ' vs $' + rt.fees.toFixed(2) + ' a mercado');
 }
 // 12) funding: taxa constante de 0,01%/h numa posição longa custa horas x taxa x valor
@@ -125,7 +126,7 @@ console.log('backtest ok');
 }
 // 13) janelas from/to e teste em duas partes
 {
-  const data = { GOLD: walk(11, 3000, .00005, .003), SPX: walk(12, 3000, 0, .003), EURUSD: walk(13, 3000, 0, .002, 1.12) };
+  const data = { GOLD: walk(11, 3000, .00005, .012), SPX: walk(12, 3000, 0, .012), EURUSD: walk(13, 3000, 0, .012, 1.12) };
   const mid = data.GOLD[1800].t;
   const a = BT.simulate(data, liveCfg, { to: mid }), b = BT.simulate(data, liveCfg, { from: mid });
   assert.ok(a.trades.every(t => t.o < mid && t.c < mid), 'parte A só antes'); assert.ok(b.trades.every(t => t.o >= mid), 'parte B só depois');
@@ -151,11 +152,11 @@ console.log('backtest ok');
   const H1 = 36e5, cfgD = { ...DS.DEFAULTS, start: 10000, ddStop: .2, dayLoss: .05 };
   const walkH = (seed, n, vol, p0) => walk(seed, n, 0, vol, p0).map((b, i) => ({ ...b, t: T0 + i * H1 }));
   for (const sd of [101, 202, 303]) {
-    const R = BT.research({ GOLD: walkH(sd, 3000, .006, 4400), SPX: walkH(sd + 1, 3000, .006, 7600), EURUSD: walkH(sd + 2, 3000, .003, 1.12) }, cfgD);
+    const R = BT.research({ GOLD: walkH(sd, 3000, .012, 4400), SPX: walkH(sd + 1, 3000, .012, 7600), EURUSD: walkH(sd + 2, 3000, .012, 1.12) }, cfgD);
     assert.equal(R.pass, false, 'dados aleatórios não podem passar (semente ' + sd + ')');
   }
   const ou = (seed, n, p0, k, vol) => { const r = rng(seed); let x = 0, prev = p0; const out = []; for (let i = 0; i < n; i++) { x = x * k + (r() - .5) * 2 * vol; const c = p0 * (1 + x), o = prev; out.push({ t: T0 + i * H1, o, h: Math.max(o, c) * (1 + r() * vol * .2), l: Math.min(o, c) * (1 - r() * vol * .2), c }); prev = c; } return out; };
-  const R = BT.research({ GOLD: ou(3, 5000, 4400, .93, .004), SPX: ou(4, 5000, 7600, .93, .004), EURUSD: ou(5, 5000, 1.12, .93, .003) }, cfgD);
+  const R = BT.research({ GOLD: ou(3, 5000, 4400, .93, .008), SPX: ou(4, 5000, 7600, .93, .008), EURUSD: ou(5, 5000, 1.12, .93, .008) }, cfgD);
   assert.equal(R.pass, true); assert.equal(R.best.strategy, 'reversion');
   console.log('ok   15 acaso não passa (3 séries aleatórias); mercado que reverte à média passa com a reversão (t = ' + R.best.B.tR.toFixed(1) + ')');
 }
@@ -163,7 +164,7 @@ console.log('backtest ok');
 {
   const s = DS.withStrategy({ ...DS.DEFAULTS, start: 10000, ddStop: .5, dayLoss: .5 }, 'trail');
   const bars = []; let p = 100; const r = rng(5);
-  for (let i = 0; i < 400; i++) { const o = p; p *= 1 + (i < 150 ? (r() - .5) * .004 : .0015 + (r() - .5) * .002); bars.push({ t: T0 + i * 36e5, o, h: Math.max(o, p) * 1.0005, l: Math.min(o, p) * .9995, c: p }); }
+  for (let i = 0; i < 400; i++) { const o = p; p *= 1 + (i < 150 ? (r() - .5) * .014 : .002 + (r() - .5) * .01); bars.push({ t: T0 + i * 36e5, o, h: Math.max(o, p) * 1.002, l: Math.min(o, p) * .998, c: p }); }
   const res = BT.simulate({ GOLD: bars }, s), tr = res.trades.filter(t => t.side > 0);
   const best = Math.max(...tr.map(t => t.pnl / t.risk));
   assert.ok(best > 3, 'uma trade de tendência deve render mais do que 3 R: ' + best.toFixed(2));
