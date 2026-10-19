@@ -76,6 +76,9 @@ O worker corre sozinho **a cada 5 minutos**, mesmo com a app fechada (cron da Cl
 - `SOL_MAX_PRIORITY_LAMPORTS` (200000): teto da taxa de prioridade por transação.
 - Empacotar o worker **completo** (inclui `grokbot/strategy.js` e `grokbot/backtest.js`, de que o código e os testes dependem): `npm run pack` dentro de `worker/` (ou `node scripts/pack-worker.mjs`).
 
+### Day trade e swing
+Modos `daytrade` (fecha no fim do dia UTC, sem entradas nas últimas 2 h) e `swing` (velas 4h/1d, stop móvel). Podem ser executados em real, mas só com a aprovação própria da estratégia e das velas. O piloto automático aplica o fecho de fim do dia e a janela sem entradas.
+
 ### Scalping
 O Macro Desk e o teste histórico têm um modo de **scalping** (velas de 1 e 5 min), só para papel e backtest. O worker **recusa sempre** abrir posições com estratégia `scalp` ou velas de 1/5 min
 (o worker sincroniza de 30 s a 5 min; não serve para scalping). Não há variável para o permitir.

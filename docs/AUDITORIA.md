@@ -99,7 +99,7 @@ Também corridos em Chromium sem janela, com respostas simuladas da Hyperliquid,
 exportação CSV), painéis HYPERLIQUID/SOLANA (paragem global, RETOMAR TUDO, EMERGÊNCIA, slippage real), desk em papel com o feed da Hyperliquid
 (nenhum pedido ao Lighter), desk de memecoins em demo (fecho com custos). **Sem erros de página.**
 **Não foi possível** testar contra a Hyperliquid, a Jupiter e a Binance reais (o ambiente bloqueia esses endereços): tudo o que depende da API real está em «Prováveis» (secção 2).
-Controlo estatístico: em 40 séries aleatórias, **0 passaram** o critério de aprovação; num mercado com reversão à média genuína o critério passa (t = 3,9).
+Controlo estatístico: em 120 séries aleatórias passou **1** com o limiar final (t ≥ 2,5; com t ≥ 2,0 teriam passado 2), isto é, cerca de 1 %; num mercado com reversão à média genuína o critério passa (t = 3,9).
 
 ## 7. Melhorias na gestão de risco
 
@@ -202,4 +202,21 @@ A Hyperliquid só guarda 5000 velas (17 dias de 5 min; 3 dias de 1 min), por iss
 
 ### Correção ao controlo estatístico (secção 6)
 Com 6 famílias × 2 execuções, em séries **sem vantagem** o critério `t ≥ 2` deixava passar cerca de 2–3% por corrida (1 em 40 na primeira medição).
-O limiar passou a **t ≥ 2,5** (`APPROVAL_MIN_T`), fixado pela taxa de falsos positivos em dados aleatórios, não pelos resultados reais. Medição final em dados aleatórios: ver abaixo.
+O limiar passou a **t ≥ 2,5** (`APPROVAL_MIN_T`), fixado pela taxa de falsos positivos em dados aleatórios, não pelos resultados reais. Medição final em dados aleatórios (120 séries): 1/120 passaram com t ≥ 2,5 contra 2/120 com t ≥ 2,0.
+
+## 12. Day trade e swing trade (adicionados depois do scalping)
+
+Os dois modos usam as mesmas regras de entrada do rompimento, com enquadramento diferente. O menu de modo existe no Macro Desk e no Teste histórico («Padrão», «Day trade», «Swing», «Scalping»).
+
+| Modo | Velas | O que muda | Execução real |
+|---|---|---|---|
+| Day trade (`daytrade`) | 15m, 1h, 4h | fecha tudo na última vela do dia UTC («fim do dia»); não abre nas últimas 2 h do dia; stop 2×ATR, alvo 3×ATR, máx. 24 velas | possível, com aprovação própria (estratégia + velas) |
+| Swing (`swing`) | 4h, 1d | sem alvo fixo; stop móvel 3×ATR; até 60 velas (dias a semanas) | possível, com aprovação própria |
+
+Notas honestas:
+- **Nenhum dos dois foi provado lucrativo.** Passam pelo mesmo teste em duas partes e pelo mesmo limiar (t ≥ 2,5, ≥ 30 trades na parte B) que as restantes estratégias; sem esse teste o worker recusa abrir.
+- Day trade em velas de 1 h é muitas vezes bloqueado pelo filtro de custo por risco (o custo em R fica acima de 0,15). Isto é intencional.
+- Swing em velas diárias gera poucos trades; usar «Histórico longo» (Binance) para ter amostra.
+- O fecho de fim do dia só acontece com a app aberta ou com o piloto automático ligado; fora disso ficam apenas o stop e o alvo na corretora.
+- O backtest compara cada modo só com a sua própria família (não mistura com as cinco clássicas).
+- Testes: `worker/test/modes.test.mjs` (definições, fecho de fim do dia, janela sem entradas, swing diário, Macro Desk, piloto, aprovação).

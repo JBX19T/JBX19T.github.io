@@ -131,7 +131,7 @@ console.log('backtest ok');
   const a = BT.simulate(data, liveCfg, { to: mid }), b = BT.simulate(data, liveCfg, { from: mid });
   assert.ok(a.trades.every(t => t.o < mid && t.c < mid), 'parte A só antes'); assert.ok(b.trades.every(t => t.o >= mid), 'parte B só depois');
   const R = BT.research(data, liveCfg);
-  assert.equal(R.rows.length, 12); assert.equal(R.split, data.GOLD[1800].t);
+  assert.equal(R.rows.length, 10); assert.equal(R.split, data.GOLD[1800].t);
   if (R.best) { const cands = R.rows.filter(r => r.A.n >= R.minA); assert.ok(cands.every(r => r.A.avgR <= R.best.A.avgR), 'escolhida só pela parte A'); }
   console.log('ok   13 duas partes:', R.rows.map(r => r.strategy + '/' + r.exec + ' A' + r.A.n + ' B' + r.B.n).join(' | '), '· aprovada:', R.pass);
 }

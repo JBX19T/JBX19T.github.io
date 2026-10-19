@@ -40,6 +40,7 @@ function simulate(barsByKey,cfgIn,opts={}){
   const cfg=prepCfg(cfgIn,opts.override,opts.strategy),st=D.make(cfg,opts.nMarkets||3);
   const maker=cfg.exec==='maker',taker=cfg.costBps/1e4,makerFee=(cfg.makerBps??3)/1e4;
   const slip=(cfg.slipBps||0)/1e4,slipStop=(cfg.slipStopBps??cfg.slipBps??0)/1e4,tpLimit=cfg.tpMode!=='market';
+  const barMs=cfg.barMs||(()=>{for(const k of Object.keys(barsByKey)){const b=barsByKey[k];if(b&&b.length>2){const d=[];for(let i=1;i<Math.min(b.length,60);i++)d.push(b[i].t-b[i-1].t);d.sort((x,y)=>x-y);return d[d.length>>1]}}return 36e5})();
   const FI=fundingIndex(opts.funding);
   const keys=Object.keys(barsByKey).filter(k=>barsByKey[k]&&barsByKey[k].length);
   const ix={},times=new Set();
@@ -95,6 +96,8 @@ function simulate(barsByKey,cfgIn,opts={}){
       else if(p.held>=cfg.maxHoldBars)closeAt(k,b.c,t,'time-stop');
       if(pos[k])pos[k].stop=st.trailStop(pos[k],b);   // stop móvel: só vale a partir da vela seguinte
     }
+    // 2b) day trade: à última vela do dia UTC fecha tudo a mercado (nunca dorme com posição)
+    if(st.isEOD(t+barMs)){for(const k of Object.keys(pos)){const i=ix[k].get(t);if(i!=null)closeAt(k,barsByKey[k][i].c,t,'fim do dia')}for(const k of Object.keys(pend))delete pend[k];for(const k of Object.keys(qe))delete qe[k]}
     // 3) proteção de capital (como no desk: -20% desde o máximo fecha tudo; -5% num dia pausa até amanhã)
     let e=eqNow();const dk=new Date(t).toISOString().slice(0,10);
     if(dk!==dayKey){dayKey=dk;dayEq=e;if(halted){if(halted.kind==='dd')peak=e;halted=null}}   // retoma no dia seguinte (equivale a tocar em RETOMAR)
@@ -106,6 +109,7 @@ function simulate(barsByKey,cfgIn,opts={}){
     // 4) entradas
     if(!halted)for(const k of keys){
       const i=ix[k].get(t);if(i==null||pos[k]||pend[k])continue;
+      if(st.noEntry(t+barMs))continue;   // day trade: não abre nas últimas horas do dia
       const sig=st.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));
       if(sig.dir!=='long'&&sig.dir!=='short')continue;
       const b=barsByKey[k][i],side=sig.dir==='long'?1:-1,stopDist=cfg.stopATR*sig.atr,tpDist=cfg.tpATR*sig.atr;
@@ -169,7 +173,7 @@ function research(barsByKey,cfg,opts={}){
   if(times.length<50)return{rows:[],best:null,pass:false,split:null};
   const split=times[Math.floor(times.length*(opts.split||0.6))];
   const rows=[];
-  const names=opts.only&&opts.only.length?opts.only:Object.keys(D.PRESETS);   // em velas de scalping só se compara o scalping
+  const names=opts.only&&opts.only.length?opts.only:Object.keys(D.PRESETS).filter(k=>D.PRESETS[k].mode==='classic');   // os modos (scalping, day trade, swing) comparam-se à parte
   for(const strategy of names)for(const exec of ['taker','maker']){
     const o={strategy,override:{exec},funding:opts.funding};
     rows.push({strategy,exec,label:D.PRESETS[strategy].label+(exec==='maker'?' · limitadas':' · a mercado'),

@@ -14,7 +14,7 @@ const CFG={...DSTRAT.DEFAULTS,start:10000,
   res:'15m',resMs:15*60e3,pricePoll:DEMO?1000:15000,candlePoll:DEMO?3000:60000};
 /* o filtro de volatilidade/custo é calculado por strategy.js (custo de ida e volta <= 15% do risco da trade), igual ao do teste histórico */
 /* estratégia e tamanho das velas escolhidos no TESTE HISTÓRICO (por omissão: rompimento em velas de 15 min) */
-const STRAT_KEY='dollosStratV1',IV_MS={'1m':6e4,'5m':3e5,'15m':9e5,'1h':36e5,'4h':144e5};
+const STRAT_KEY='dollosStratV1',IV_MS={'1m':6e4,'5m':3e5,'15m':9e5,'1h':36e5,'4h':144e5,'1d':864e5};
 let CHOICE={strategy:'breakout',iv:'15m'};
 if(!DEMO){try{const j=JSON.parse(localStorage.getItem(STRAT_KEY)||'null');if(j&&DSTRAT.PRESETS[j.strategy]&&IV_MS[j.iv])CHOICE={strategy:j.strategy,iv:j.iv}}catch(e){}}
 const BASE={...CFG};   // regras sem os parâmetros próprios da estratégia (o teste histórico compara as estratégias a partir daqui)
@@ -49,7 +49,7 @@ const fmtPx=(m,v)=>v==null?'—':v.toFixed(m.dec);
 const usd=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 
 /* ===== indicadores e estratégia (puros, testáveis) ===== */
-const {ema,atr,signal,cost,sizeFor,trailStop,hasTarget}=DSTRAT.make(CFG,MK.length);   // regras em strategy.js, partilhadas com o teste histórico
+const {ema,atr,signal,cost,sizeFor,trailStop,hasTarget,isEOD,noEntry}=DSTRAT.make(CFG,MK.length);   // regras em strategy.js, partilhadas com o teste histórico
 function unreal(p,px){return p.side*(px-p.entry)/p.entry*p.notional}
 function equity(){let e=S.cash;for(const k in S.pos){const px=P[k].px;if(px!=null)e+=unreal(S.pos[k],px)}return e}
 const slipIn=()=>(CFG.slipBps||0)/1e4;
@@ -99,9 +99,12 @@ function onBar(m){   // corre quando fecha uma vela nova
   p.sig=stale?{dir:'flat',why:'mercado parado / sem velas novas'}:signal(cb);
   const cat=p.sig.dir==='flat'?(/custo/.test(p.sig.why)?'flat:custo':/volatilidade/.test(p.sig.why)?'flat:vol':'flat'):p.sig.dir;   // contagem de sinais: dados para diagnosticar
   const ss=(S.sigStats??={})[m.key]??={};ss[cat]=(ss[cat]||0)+1;
+  const barEnd=lastT?lastT+barMs(p):0;   // instante em que a vela fechou
   if(S.pos[m.key]){const q=S.pos[m.key];q.held++;checkExits(m);
+    if(S.pos[m.key]&&isEOD(barEnd)){close(m,'fim do dia');return}   // day trade: nunca dorme com posição
     if(S.pos[m.key]&&cb.length){q.stop=trailStop(q,cb[cb.length-1]);save()}   // stop móvel (só na estratégia que o usa)
     return}
+  if(noEntry(barEnd))return;   // day trade: não abre nas últimas horas do dia
   if((p.sig.dir==='long'||p.sig.dir==='short')&&S.pos[m.key]==null&&!S.halt)open(m,p.sig.dir,p.sig);
 }
 /* chamado depois de cada atualização de velas: se fechou uma vela nova, decide; senão só vigia saídas */
@@ -224,10 +227,10 @@ function render(){
   body.innerHTML=`${S.halt?`<div class="halt">⛔ <b>PARADO</b> · ${S.halt.msg}. Nenhuma entrada nova. <button class="ghost" id="mkResume">RETOMAR</button></div>`:''}<div class="mkg">${cards}</div>
     <div class="mkacc"><span>Saldo <b>${usd(eq)}</b> <span class="${pnl>=0?'up':'dn'}">(${pnl>=0?'+':''}${(pnl/CFG.start*100).toFixed(2)}%)</span></span><span>${S.wins}W ${S.closed-S.wins}L</span><button class="ghost" id="mkReset">REINICIAR</button></div>
     ${rows?`<table><thead><tr><th>Ativo</th><th></th><th>Entrada</th><th>Preço</th><th>SL</th><th>TP</th><th>P/L</th><th></th></tr></thead><tbody id="mkRows">${rows}</tbody></table>`:`<div class="note">Sem posições abertas. Estratégia: <b>${DSTRAT.PRESETS[CFG.strategy].label}</b> em velas de ${CFG.res}.</div>`}
-    <div class="note">Paper trading: conta fictícia de ${usd(CFG.start)}, risco de 1% por trade, estratégia ${DSTRAT.PRESETS[CFG.strategy].label} (velas de ${CFG.res}), stop ${CFG.stopATR}×ATR, ${CFG.tpATR>0?`alvo ${CFG.tpATR}×ATR`:`sem alvo, stop móvel a ${CFG.trailATR}×ATR`}, taxa ${CFG.costBps} bps (alvo: ordem limitada ${CFG.makerBps} bps) mais slippage de ${CFG.slipBps} bps (stops ${CFG.slipStopBps} bps), sem alavancagem acima de ${CFG.maxLev}×; só entra se o custo de ida e volta for no máximo ${Math.round(CFG.maxCostR*100)}% do risco. Sinais só em velas fechadas. Proteção: se a conta perder ${Math.round(CFG.ddStop*100)}% desde o máximo, fecha tudo e pára; perde ${Math.round(CFG.dayLoss*100)}% num dia, pausa até amanhã (retomar é manual). ${SCALP?'<b>MODO SCALPING (só papel):</b> velas de '+CFG.res+', stop '+CFG.stopATR+'×ATR, alvo '+CFG.tpATR+'×ATR, no máximo '+CFG.maxHoldBars+' velas. O worker não executa scalping em real. ':''}${FEED==='hl'?'Preços e velas da Hyperliquid (xyz:GOLD, xyz:SP500, xyz:EUR): os mesmos mercados onde o worker executa.':'ATENÇÃO: feed do Lighter com proxies (PAXG e SPY), diferente do mercado onde o worker executa.'} O estado fica guardado no telemóvel.</div>`;
+    <div class="note">Paper trading: conta fictícia de ${usd(CFG.start)}, risco de 1% por trade, estratégia ${DSTRAT.PRESETS[CFG.strategy].label} (velas de ${CFG.res}), stop ${CFG.stopATR}×ATR, ${CFG.tpATR>0?`alvo ${CFG.tpATR}×ATR`:`sem alvo, stop móvel a ${CFG.trailATR}×ATR`}, taxa ${CFG.costBps} bps (alvo: ordem limitada ${CFG.makerBps} bps) mais slippage de ${CFG.slipBps} bps (stops ${CFG.slipStopBps} bps), sem alavancagem acima de ${CFG.maxLev}×; só entra se o custo de ida e volta for no máximo ${Math.round(CFG.maxCostR*100)}% do risco. Sinais só em velas fechadas. Proteção: se a conta perder ${Math.round(CFG.ddStop*100)}% desde o máximo, fecha tudo e pára; perde ${Math.round(CFG.dayLoss*100)}% num dia, pausa até amanhã (retomar é manual). ${CFG.flatEOD?'<b>MODO DAY TRADE:</b> fecha tudo à última vela do dia UTC e não abre nas últimas '+CFG.noEntryHours+' h. ':''}${CHOICE.strategy==='swing'?'<b>MODO SWING:</b> posições de dias a semanas, stop móvel a '+CFG.trailATR+'×ATR, sem alvo fixo. ':''}${SCALP?'<b>MODO SCALPING (só papel):</b> velas de '+CFG.res+', stop '+CFG.stopATR+'×ATR, alvo '+CFG.tpATR+'×ATR, no máximo '+CFG.maxHoldBars+' velas. O worker não executa scalping em real. ':''}${FEED==='hl'?'Preços e velas da Hyperliquid (xyz:GOLD, xyz:SP500, xyz:EUR): os mesmos mercados onde o worker executa.':'ATENÇÃO: feed do Lighter com proxies (PAXG e SPY), diferente do mercado onde o worker executa.'} O estado fica guardado no telemóvel.</div>`;
 }
 function record(){guard();const e=equity();S.hist.push(e);if(S.hist.length>500)S.hist.shift();save()}
-const MODES=[['breakout','15m','Padrão · rompimento · 15 min'],['scalp','5m','Scalping · 5 min (só papel)'],['scalp','1m','Scalping · 1 min (só papel)']];
+const MODES=[['breakout','15m','Padrão · rompimento · 15 min'],['daytrade','1h','Day trade · 1 h (fecha no fim do dia)'],['daytrade','4h','Day trade · 4 h (fecha no fim do dia)'],['swing','1d','Swing trade · diário (dias a semanas)'],['swing','4h','Swing trade · 4 h'],['scalp','5m','Scalping · 5 min (só papel)'],['scalp','1m','Scalping · 1 min (só papel)']];
 function bindMode(){
   const body=$m('mkBody');if(!body||$m('mkMode'))return;
   const cur=CHOICE.strategy+'|'+CHOICE.iv,list=MODES.some(x=>x[0]+'|'+x[1]===cur)?MODES:[...MODES,[CHOICE.strategy,CHOICE.iv,`${DSTRAT.PRESETS[CHOICE.strategy].label} · ${CHOICE.iv}`]];
@@ -236,7 +239,8 @@ function bindMode(){
   body.parentNode.insertBefore(bar,body);
   bar.addEventListener('change',e=>{
     const [st,iv]=e.target.value.split('|');
-    if(!confirm(DSTRAT.isScalp(st,iv)?'Ativar o SCALPING no Macro Desk (só papel)? Com as taxas atuais quase nunca passa o filtro de custo: é esperado ficar parado ou perder. A página recarrega.':`Mudar o Macro Desk para ${DSTRAT.PRESETS[st].label} em velas de ${iv}? A página recarrega.`)){e.target.value=cur;return}
+    const extra=DSTRAT.isScalp(st,iv)?' Com as taxas atuais quase nunca passa o filtro de custo (só papel).':st==='daytrade'?' Fecha todas as posições à última vela do dia UTC e não abre nas últimas 2 h.':st==='swing'?' Posições de dias a semanas, com stop móvel.':'';
+    if(!confirm(`Mudar o Macro Desk para ${DSTRAT.PRESETS[st].label} em velas de ${iv}?${extra} A página recarrega.`)){e.target.value=cur;return}
     if(setStrategy(st,iv))location.reload();
   });
 }

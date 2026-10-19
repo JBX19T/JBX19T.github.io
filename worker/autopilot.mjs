@@ -8,7 +8,7 @@
 import DS from '../grokbot/strategy.js';
 import { MARKET_KEYS } from './hl.mjs';
 
-const IV_MS = { '1m': 6e4, '5m': 3e5, '15m': 9e5, '1h': 36e5, '4h': 144e5 };
+const IV_MS = { '1m': 6e4, '5m': 3e5, '15m': 9e5, '1h': 36e5, '4h': 144e5, '1d': 864e5 };
 const WINDOW_MS = 6 * 60e3;   // só decide nos primeiros minutos depois do fecho de uma vela (o cron corre a cada 5 min)
 
 export function autopilotCfg(env) {
@@ -38,8 +38,10 @@ export async function runAutopilot({ env, hl, store, notify, now = Date.now(), s
     const m = c.markets && c.markets[k];
     const bars = m && m.bars ? m.bars.map(a => ({ t: a[0], o: a[1], h: a[2], l: a[3], c: a[4] })).filter(b => b.t + A.ms <= now).slice(-200) : [];
     const lastT = bars.length ? bars[bars.length - 1].t : null;
+    const barEnd = lastT ? lastT + A.ms : 0;   // instante em que a última vela fechou
     if (pos) {   // em posição: mantém (stop e alvo estão na corretora) até ao limite de tempo
       ap.opened[k] ??= lastT || now;
+      if (S.isEOD(barEnd)) { notes[k] = 'fim do dia (day trade): fecha'; continue; }   // day trade: nunca dorme com posição
       const held = lastT ? Math.round((lastT - ap.opened[k]) / A.ms) : 0;
       if (held >= cfg.maxHoldBars) { notes[k] = `limite de ${cfg.maxHoldBars} velas: fecha`; continue; }
       desired[k] = { side: pos.szi > 0 ? 'long' : 'short', frac: 0 };
@@ -57,6 +59,7 @@ export async function runAutopilot({ env, hl, store, notify, now = Date.now(), s
     if (!lastT) { notes[k] = 'sem velas'; continue; }
     if (ap.lastBar[k] === lastT) { notes[k] = 'vela já avaliada'; continue; }
     ap.lastBar[k] = lastT;
+    if (S.noEntry(barEnd)) { notes[k] = `day trade: não abre nas últimas ${cfg.noEntryHours} h do dia`; continue; }
     const sig = S.signal(bars);
     notes[k] = sig.why;
     if (sig.dir !== 'long' && sig.dir !== 'short') continue;
