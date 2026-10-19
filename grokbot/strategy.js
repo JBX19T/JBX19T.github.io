@@ -6,30 +6,63 @@
               trend     = tendência lenta: cruzamento de EMAs 20/100 com stops largos
               trail     = tendência com stop móvel: rompimento de 40 velas a favor da EMA 20/100, sem alvo fixo; o stop
                           acompanha o preço a 3×ATR do melhor preço desde a entrada (deixa correr os ganhos, corta as perdas)
+              scalp     = SCALPING (velas de 1 e 5 min): reversão curta (fecho a mais de 2,2 desvios-padrão da média de 20 velas), stop 1,2×ATR, alvo
+                          1×ATR, no máximo 12 velas. Parâmetros fixados a priori (convenção Bollinger), não afinados. Só papel e backtest: o worker
+                          sincroniza de 30 s a 5 min, o que não serve para scalping (ver SCALP_INTERVALS: o worker recusa abrir).
+              daytrade  = DAY TRADE: o rompimento original (EMA 20/50 + 20 velas) em velas de 15 min a 4 h, mas NUNCA dorme com posição: fecha tudo à
+                          última vela do dia UTC (fim do dia) e não abre nas últimas 2 h. Alvo 3×ATR, stop 2×ATR, no máximo 24 velas.
+              swing     = SWING TRADE: rompimento de 20 velas a favor da EMA 20/50 em velas de 4 h ou DIÁRIAS, sem alvo fixo, stop móvel a 3×ATR,
+                          dias a semanas (até 60 velas). É a regra clássica de seguir tendência (canal de 20 dias).
               pullback  = compra nas quedas dentro da tendência: tendência de alta (preço e EMA 20 acima da EMA 100) e RSI de 2
                           períodos abaixo de 10 -> long; o inverso -> short. Alvo curto, saída rápida (estilo Connors) */
 (function(root){
 /* parâmetros comuns (os mesmos do Macro Desk e do piloto automático do worker) */
-const DEFAULTS={riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:9,maxATRpct:.03};
+/* maxCostR: o custo de ida e volta não pode passar de 15% do risco da trade (1 R). Regra fixada ANTES de ver resultados, por convenção:
+   com stops curtos (ATR baixo) o mesmo custo em % vale muitos R (custo_R = 2×custo / distância do stop). Não é um parâmetro afinado.
+   slipBps / slipStopBps: slippage assumido por lado em ordens a mercado / em stops (SUPOSIÇÃO a substituir pelo medido: ver execLog do worker).
+   makerBps: taxa das ordens limitadas (alvo). tpMode: 'limit' (como na Hyperliquid, HL_TP_TRIGGER por omissão desligado) ou 'market'. */
+const DEFAULTS={riskPct:.01,maxLev:5,fast:20,slow:50,brk:20,atrN:14,stopATR:2,tpATR:3,maxHoldBars:96,costBps:9,maxATRpct:.03,
+  maxCostR:.15,slipBps:3,slipStopBps:5,makerBps:3,tpMode:'limit'};
+/* ATR mínimo (em % do preço) para a trade valer a pena: custo de ida e volta <= maxCostR × risco. Um minATRpct explícito na configuração tem prioridade. */
+function minATRpct(CFG){
+  if(Number.isFinite(CFG.minATRpct))return CFG.minATRpct;
+  const cost=(CFG.costBps||0)/1e4,stop=CFG.stopATR>0?CFG.stopATR:2,mc=CFG.maxCostR>0?CFG.maxCostR:DEFAULTS.maxCostR;
+  return Math.max(.0005,2*cost/(stop*mc));
+}
 const PRESETS={
-  breakout:{label:'Rompimento (original)',short:'rompimento',p:{}},
-  reversion:{label:'Reversão à média',short:'reversão',p:{bandN:20,band:2,stopATR:2,tpATR:2}},
-  trend:{label:'Tendência lenta',short:'tendência',p:{fast:20,slow:100,stopATR:3,tpATR:6,maxHoldBars:192}},
-  trail:{label:'Tendência com stop móvel',short:'stop móvel',p:{fast:20,slow:100,brk:40,stopATR:3,tpATR:0,trailATR:3,maxHoldBars:400}},
-  pullback:{label:'Queda dentro da tendência (RSI 2)',short:'RSI 2',p:{fast:20,slow:100,stopATR:2,tpATR:1.5,maxHoldBars:12}},
+  breakout:{mode:'classic',label:'Rompimento (original)',short:'rompimento',p:{}},
+  reversion:{mode:'classic',label:'Reversão à média',short:'reversão',p:{bandN:20,band:2,stopATR:2,tpATR:2}},
+  trend:{mode:'classic',label:'Tendência lenta',short:'tendência',p:{fast:20,slow:100,stopATR:3,tpATR:6,maxHoldBars:192}},
+  trail:{mode:'classic',label:'Tendência com stop móvel',short:'stop móvel',p:{fast:20,slow:100,brk:40,stopATR:3,tpATR:0,trailATR:3,maxHoldBars:400}},
+  pullback:{mode:'classic',label:'Queda dentro da tendência (RSI 2)',short:'RSI 2',p:{fast:20,slow:100,stopATR:2,tpATR:1.5,maxHoldBars:12}},
+  scalp:{mode:'scalp',label:'Scalping (reversão curta)',short:'scalping',p:{bandN:20,band:2.2,atrN:10,stopATR:1.2,tpATR:1,maxHoldBars:12}},
+  daytrade:{mode:'day',label:'Day trade (fecha no fim do dia)',short:'day trade',p:{stopATR:2,tpATR:3,maxHoldBars:24,flatEOD:true,noEntryHours:2}},
+  swing:{mode:'swing',label:'Swing trade (tendência, dias a semanas)',short:'swing',p:{fast:20,slow:50,brk:20,stopATR:2,tpATR:0,trailATR:3,maxHoldBars:60}},
 };
+/* modos da app: cada um limita as famílias e os tamanhos de vela que fazem sentido */
+const MODES={
+  all:{label:'Todas as estratégias clássicas',ivs:['15m','1h','4h']},
+  scalp:{label:'Scalping (só papel)',ivs:['1m','5m'],only:['scalp']},
+  day:{label:'Day trade (fecha no fim do dia)',ivs:['15m','1h','4h'],only:['daytrade']},
+  swing:{label:'Swing trade (dias a semanas)',ivs:['4h','1d'],only:['swing']},
+};
+/* intervalos de scalping: só backtest e papel. Execução real bloqueada (o worker sincroniza de 30 s a 5 min: a ordem chegaria minutos depois do sinal) */
+const SCALP_INTERVALS=['1m','5m'];
+const isScalp=(strategy,iv)=>strategy==='scalp'||SCALP_INTERVALS.includes(iv);
 /* devolve a configuração com os parâmetros próprios da estratégia escolhida */
 function withStrategy(cfg,name){
   const k=PRESETS[name]?name:'breakout';
   // os parâmetros próprios de cada estratégia voltam ao valor comum antes de aplicar os da escolhida (não herdam de outra)
-  const reset={fast:DEFAULTS.fast,slow:DEFAULTS.slow,brk:DEFAULTS.brk,stopATR:DEFAULTS.stopATR,tpATR:DEFAULTS.tpATR,maxHoldBars:DEFAULTS.maxHoldBars,trailATR:0};
+  const reset={fast:DEFAULTS.fast,slow:DEFAULTS.slow,brk:DEFAULTS.brk,atrN:DEFAULTS.atrN,stopATR:DEFAULTS.stopATR,tpATR:DEFAULTS.tpATR,maxHoldBars:DEFAULTS.maxHoldBars,trailATR:0,maxCostR:DEFAULTS.maxCostR,flatEOD:false,noEntryHours:0};
   return{...cfg,...reset,...PRESETS[k].p,strategy:k};
 }
 function make(CFG,nMarkets=3){
   const kind=PRESETS[CFG.strategy]?CFG.strategy:'breakout';
   const ema=(a,n)=>{if(a.length<n)return null;const k=2/(n+1);let e=a.slice(0,n).reduce((s,v)=>s+v,0)/n;for(let i=n;i<a.length;i++)e=a[i]*k+e*(1-k);return e};
   const atr=(bars,n)=>{if(bars.length<n+1)return null;let s=0;for(let i=bars.length-n;i<bars.length;i++){const b=bars[i],pc=bars[i-1].c;s+=Math.max(b.h-b.l,Math.abs(b.h-pc),Math.abs(b.l-pc))}return s/n};
-  const volFilter=(a,px)=>{const ap=a/px;if(ap<CFG.minATRpct)return'volatilidade muito baixa';if(ap>CFG.maxATRpct)return'volatilidade extrema';return null};
+  const volFilter=(a,px)=>{const ap=a/px,mn=minATRpct(CFG);
+    if(ap<mn){const cr=2*(CFG.costBps||0)/1e4/((CFG.stopATR||2)*ap);return cr>(CFG.maxCostR||DEFAULTS.maxCostR)?`custo ${cr.toFixed(2)} R por trade (máx. ${CFG.maxCostR||DEFAULTS.maxCostR})`:'volatilidade muito baixa'}
+    if(ap>CFG.maxATRpct)return'volatilidade extrema';return null};
   /* tendência (EMA rápida vs lenta) + rompimento do máximo/mínimo das últimas N velas + filtro de volatilidade */
   const breakout=bars=>{
     const need=Math.max(CFG.slow,CFG.brk+1,CFG.atrN+1)+1;
@@ -77,7 +110,7 @@ function make(CFG,nMarkets=3){
     if(last.c<s&&f<s&&r>90)return{dir:'short',why:`subida em tendência de baixa (RSI2 ${r.toFixed(0)})`,atr:a};
     return{dir:'flat',why:`RSI2 ${r.toFixed(0)}, ${f>s?'alta':'baixa'}`,atr:a};
   };
-  const signal={breakout,reversion,trend,trail:breakout,pullback}[kind];
+  const signal={breakout,reversion,trend,trail:breakout,pullback,scalp:reversion,daytrade:breakout,swing:breakout}[kind];
   /* stop móvel: devolve o novo stop depois de uma vela (só aperta, nunca alarga). p = {side, stop, best, atr} */
   const trailStop=(p,bar)=>{
     if(!(CFG.trailATR>0)||!(p.atr>0))return p.stop;
@@ -88,14 +121,21 @@ function make(CFG,nMarkets=3){
   const cost=()=>CFG.costBps/1e4;
   const sizeFor=(eq,entry,stopDist)=>{const riskUsd=eq*CFG.riskPct,n=riskUsd/(stopDist/entry);return Math.min(n,eq*CFG.maxLev/nMarkets)};
   const hasTarget=CFG.tpATR>0;
-  return{ema,atr,rsi,signal,cost,sizeFor,kind,trailStop,hasTarget};
+  /* day trade: regras de sessão. barEnd = instante em que a vela fechou (ms UTC). Fim do dia = a vela que fecha à meia-noite UTC. */
+  const DAY=864e5;
+  const isEOD=barEnd=>!!CFG.flatEOD&&barEnd%DAY===0;
+  const noEntry=barEnd=>{if(!(CFG.noEntryHours>0))return false;const m=barEnd%DAY;return m!==0&&DAY-m<CFG.noEntryHours*36e5};
+  return{ema,atr,rsi,signal,cost,sizeFor,kind,trailStop,hasTarget,isEOD,noEntry};
 }
 /* trava do dinheiro real: só se opera a sério uma estratégia (e tamanho de velas) que passou o teste em duas partes
-   há menos de 45 dias. Mesmas exigências do teste: 30+ trades na 2.ª parte, ganho médio > 0, fator de lucro > 1,1, t >= 2. */
+   há menos de 45 dias. Mesmas exigências do teste: 30+ trades na 2.ª parte, ganho médio > 0, fator de lucro > 1,1, t >= APPROVAL_MIN_T. */
 const APPROVAL_DAYS=45;
+/* t mínimo da 2.ª parte. 2,0 deixava passar ~2,5% das séries SEM vantagem por corrida; com 6 famílias × 2 execuções × vários tamanhos de vela e repetições,
+   2,5 (≈0,6% por corrida) é o mínimo razoável. Fixado a priori pela taxa de falsos positivos medida em dados aleatórios, não pelos resultados reais. */
+const APPROVAL_MIN_T=2.5;
 function approvalOk(a,strategy,iv,now=Date.now()){
-  return !!(a&&a.strategy===strategy&&a.iv===iv&&a.at>0&&now-a.at<=APPROVAL_DAYS*864e5&&now>=a.at-6e5&&a.n>=30&&a.avgR>0&&a.pf>1.1&&a.tR>=2);
+  return !!(a&&a.strategy===strategy&&a.iv===iv&&a.at>0&&now-a.at<=APPROVAL_DAYS*864e5&&now>=a.at-6e5&&a.n>=30&&a.avgR>0&&a.pf>1.1&&a.tR>=APPROVAL_MIN_T);
 }
-const api={make,PRESETS,withStrategy,DEFAULTS,approvalOk,APPROVAL_DAYS};
+const api={make,PRESETS,MODES,withStrategy,DEFAULTS,approvalOk,APPROVAL_DAYS,minATRpct,SCALP_INTERVALS,isScalp,APPROVAL_MIN_T};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSTRAT=api;
 })(typeof window!=='undefined'?window:globalThis);

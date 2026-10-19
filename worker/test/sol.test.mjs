@@ -53,4 +53,6 @@ const env=(x={})=>({SOL_KEY:ref.key64,HELIUS_API_KEY:'k',...x});
 {const {S,f}=sim({tokens:[{mint:M1,ui:3},{mint:M2,ui:5}]});const sol=makeSol(env({SOL_LIVE:'1'}),f);assert.equal(await sol.valueOf(M1,'3000000'),0.012345);
  const r=await sol.sellOne(M2);assert.equal(S.sent.length,1);assert.equal(r.results[0].mint,M2);assert.equal(S.swaps[0].quoteResponse.inAmount,'5000000');
  const r2=await sol.sellOne(M3);assert.match(r2.skipped[0].reason,/já não está/);console.log('ok   valor em USDC e venda de uma só memecoin')}
+{const {S,f}=sim();await makeSol(env({SOL_LIVE:'1',SOL_MAX_PRIORITY_LAMPORTS:'50000'}),f).sync([M1]);assert.equal(S.swaps[0].prioritizationFeeLamports.priorityLevelWithMaxLamports.maxLamports,50000);
+ const o=sim();await makeSol(env({SOL_LIVE:'1'}),o.f).sync([M1]);assert.equal(o.S.swaps[0].prioritizationFeeLamports.priorityLevelWithMaxLamports.maxLamports,200000);console.log('ok   teto da taxa de prioridade configurável (omissão 200000 lamports)')}
 console.log('TUDO OK');

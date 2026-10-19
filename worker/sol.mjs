@@ -3,6 +3,7 @@
 //               HELIUS_API_KEY (já usado pelo resto do worker)   JUP_API_KEY (opcional)
 //   Variáveis:  SOL_LIVE=1 só então assina e envia; sem isto só calcula o plano e pede cotações (simulação)
 //               SOL_PAUSED=1 bloqueia compras (só vende)
+//   Custos:     SOL_MAX_PRIORITY_LAMPORTS (200000) = teto da taxa de prioridade por transação (0,0002 SOL). Com bilhetes de $2 pesa ~3% por ida e volta
 //   Limites:    SOL_TICKET_USD (2)  SOL_MAX_TICKET_USD (5, teto)  SOL_MAX_OPEN (3)  SOL_SLIPPAGE_BPS (300, máx 1000)  JUP_BASE
 //               impacto no preço: compras até 5%; vendas até SOL_SELL_MAX_IMPACT (20%) — sair de uma memecoin a cair vale mais do que ficar preso nela
 // Só assina swaps USDC <-> token construídos pela Jupiter a partir de uma cotação nossa. Nunca envia tokens ou SOL para outro endereço.
@@ -65,6 +66,7 @@ export function makeSol(env, f = fetch) {
   const cap = num(env.SOL_MAX_TICKET_USD, 5), ticket = Math.min(num(env.SOL_TICKET_USD, 2), cap);
   const maxOpen = Math.max(1, Math.floor(num(env.SOL_MAX_OPEN, 3)));
   const slip = Math.min(Math.max(Math.floor(num(env.SOL_SLIPPAGE_BPS, 300)), 10), 1000);
+  const prio = Math.min(Math.max(Math.floor(num(env.SOL_MAX_PRIORITY_LAMPORTS, 200000)), 1000), 1000000);
   const JUP = (env.JUP_BASE || 'https://lite-api.jup.ag/swap/v1').replace(/\/$/, '');
   const jh = () => ({ 'content-type': 'application/json', ...(env.JUP_API_KEY ? { 'x-api-key': env.JUP_API_KEY } : {}) });
   let kp = null;
@@ -107,7 +109,7 @@ export function makeSol(env, f = fetch) {
   async function swap(q) {
     const r = await f(JUP + '/swap', { method: 'POST', headers: jh(), body: JSON.stringify({
       quoteResponse: q, userPublicKey: address(), dynamicComputeUnitLimit: true,
-      prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: 200000, priorityLevel: 'high' } } }) });
+      prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: prio, priorityLevel: 'high' } } }) });
     if (!r.ok) throw new Error(`jupiter swap ${r.status}`);
     const j = await r.json(); if (!j.swapTransaction) throw new Error('jupiter sem transação');
     const { tx, signature } = signVersionedTx(b64.dec(j.swapTransaction), key().seed, key().pub);
@@ -131,7 +133,8 @@ export function makeSol(env, f = fetch) {
   }
 
   // blocked: { mint: até quando (ms) } — memecoins vendidas pela proteção do servidor não se voltam a comprar logo
-  async function sync(desired = [], { sellAll = false, blocked = {}, now = Date.now() } = {}) {
+  // noBuy: motivo para não comprar nada (paragem global ou outra proteção); vender continua sempre
+  async function sync(desired = [], { sellAll = false, blocked = {}, now = Date.now(), noBuy = null } = {}) {
     const res = { mode: live ? 'real' : 'simulacao', plan: [], results: [], skipped: [] };
     const want = [];
     for (const m of desired || []) { if (validMint(m)) { if (m !== USDC && m !== WSOL && !want.includes(m)) want.push(m); } else res.skipped.push({ mint: String(m).slice(0, 12), reason: 'mint inválido' }); }
@@ -149,7 +152,7 @@ export function makeSol(env, f = fetch) {
     for (const m of want) {
       if (held.has(m)) continue;
       if (blocked[m] && blocked[m] > now) { res.skipped.push({ mint: m, reason: 'vendida pela proteção do servidor; bloqueada até ' + new Date(blocked[m]).toISOString().slice(11, 16) + ' UTC' }); continue; }
-      if (env.SOL_PAUSED === '1') { res.skipped.push({ mint: m, reason: 'pausado (SOL_PAUSED)' }); continue; }
+      if (env.SOL_PAUSED === '1' || noBuy) { res.skipped.push({ mint: m, reason: noBuy || 'pausado (SOL_PAUSED)' }); continue; }
       if (open >= maxOpen) { res.skipped.push({ mint: m, reason: `máximo de ${maxOpen} posições` }); continue; }
       if (usdc < ticket) { res.skipped.push({ mint: m, reason: `USDC insuficiente ($${usdc.toFixed(2)} < $${ticket})` }); continue; }
       if (st.sol < 0.01) { res.skipped.push({ mint: m, reason: `SOL insuficiente para taxas (${st.sol.toFixed(4)})` }); continue; }

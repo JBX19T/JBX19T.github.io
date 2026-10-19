@@ -13,7 +13,7 @@ const $l=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const usd=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const note=t=>{try{log('p',t)}catch(e){}};
-const P={hl:{st:null,last:null,err:'',busy:false,log:[],sig:null,at:0},sol:{st:null,last:null,err:'',busy:false,log:[],sig:null,at:0}};
+const P={hl:{st:null,last:null,err:'',busy:false,log:[],sig:null,at:0},sol:{st:null,last:null,err:'',busy:false,log:[],sig:null,at:0},risk:null};
 const HL_EVERY=30000,SOL_EVERY=20000;
 
 async function call(method,path,body){
@@ -41,8 +41,9 @@ function remember(k,res){   // resume o que o worker fez e guarda nas últimas l
 function hlGate(){
   try{
     const c=(window.MACRO&&MACRO.CHOICE)||{strategy:'breakout',iv:'15m'};
-    const all=JSON.parse(localStorage.getItem('dollosApprovalV1')||'{}')||{},a=all[c.strategy+'|'+c.iv];
+    const all=JSON.parse(localStorage.getItem('dollosApprovalV2')||'{}')||{},a=all[c.strategy+'|'+c.iv];
     const label=`${DSTRAT.PRESETS[c.strategy].label} · ${c.iv}`;
+    if(DSTRAT.isScalp(c.strategy,c.iv))return{ok:false,label,why:'é scalping: só corre em papel e no teste histórico (o worker sincroniza de 30 s a 5 min, o que não serve para scalping)'};
     if(DSTRAT.approvalOk(a,c.strategy,c.iv))return{ok:true,label,until:a.at+DSTRAT.APPROVAL_DAYS*864e5};
     return{ok:false,label,why:a&&a.at?'a aprovação expirou (refaz o teste)':'não passou no teste histórico'};
   }catch(e){return{ok:false,label:'?',why:'sem dados'}}
@@ -55,6 +56,12 @@ function memeGate(){
   }catch(e){return{ok:false,why:'sem dados'}}
 }
 
+/* o que a app diz ao worker sobre a estratégia em uso e a sua aprovação: o worker volta a verificar e só abre posições se for válida */
+function hlAttest(){
+  const c=(window.MACRO&&MACRO.CHOICE)||{strategy:'breakout',iv:'15m'};let a=null;
+  try{a=(JSON.parse(localStorage.getItem('dollosApprovalV2')||'{}')||{})[c.strategy+'|'+c.iv]}catch(e){}
+  return{strategy:c.strategy,iv:c.iv,...(a?{approval:a}:{})};
+}
 /* ===== o que cada desk quer ter ===== */
 function hlDesired(){
   const K=window.MACRO;if(!K)return {};
@@ -81,8 +88,9 @@ async function sync(k){
     if(k==='sol'&&!P.sol.st){P[k].sig=JSON.stringify(solDesired());P[k].at=Date.now();P[k].busy=false;render(k);return}   // sem saber o que a carteira tem, não decide nada (a trava depende disso)
     const want=k==='hl'?hlDesired():solDesired();P[k].sig=JSON.stringify(want);
     const auto=k==='hl'&&P.hl.st&&P.hl.st.autopilot&&P.hl.st.autopilot.on;   // piloto automático no servidor: a app só observa
-    const locked=k==='hl'&&!hlGate().ok;   // estratégia sem aprovação: a app não envia nada à Hyperliquid
-    if(!auto&&!locked)try{P[k].last=await call('POST',`/${k}/sync`,{desired:want});remember(k,P[k].last);P[k].st=await call('GET',`/${k}/state`).catch(()=>P[k].st)}catch(e){P[k].err=e.message}
+    // sem aprovação a app continua a sincronizar: o worker recusa ABRIR, mas continua a fechar e a manter stops das posições que existam
+    try{P.risk=await call('GET','/risk/state')}catch(e){}
+    if(!auto)try{P[k].last=await call('POST',`/${k}/sync`,k==='hl'?{desired:want,...hlAttest()}:{desired:want});remember(k,P[k].last);P[k].st=await call('GET',`/${k}/state`).catch(()=>P[k].st)}catch(e){P[k].err=e.message}
     P[k].at=Date.now();
   }catch(e){P[k].err=e.message}
   P[k].busy=false;render(k);
@@ -91,6 +99,24 @@ async function flatten(k){
   if(!confirm(k==='hl'?'Fechar já todas as posições da Hyperliquid (ouro, S&P, EUR/USD)?':'Vender já todas as memecoins da carteira Solana?'))return;
   try{const r=await call('POST',`/${k}/flatten`,{});remember(k,r);P[k].err='';P[k].st=await call('GET',`/${k}/state`)}catch(e){P[k].err=e.message}
   render(k);
+}
+async function panic(){
+  if(!confirm('PARAGEM DE EMERGÊNCIA: fecha já todas as posições da Hyperliquid e vende todas as memecoins da carteira Solana, e bloqueia novas entradas até tocares em RETOMAR TUDO. Continuar?'))return;
+  try{const r=await call('POST','/risk/panic',{});for(const k of ['hl','sol'])if(r[k])remember(k,r[k]);P.risk=await call('GET','/risk/state');for(const k of ['hl','sol'])P[k].err=''}catch(e){P.hl.err='emergência: '+e.message}
+  render('hl');render('sol');
+}
+async function riskResume(){
+  try{await call('POST','/risk/resume',{});P.risk=await call('GET','/risk/state')}catch(e){P.hl.err=e.message}
+  render('hl');render('sol');
+}
+function riskHtml(){
+  const r=P.risk;if(!r||!r.on)return'';
+  const halt=r.riskHalt?`<div class="halt">🛑 <b>PARAGEM GLOBAL ativa</b> desde ${new Date(r.riskHalt.t).toISOString().slice(0,16).replace('T',' ')} UTC: nada abre, nem na Hyperliquid nem na Solana. <button class="ghost" data-a="riskresume">RETOMAR TUDO</button></div>`:'';
+  const blind=(r.fails&&(r.fails.hl>=3||r.fails.sol>=3))?`<div class="halt">⚠ A proteção do servidor não consegue ler a corretora há ${Math.max(r.fails.hl||0,r.fails.sol||0)*5} min. Só os stops que já estão na corretora te protegem.</div>`:'';
+  const ex=r.exec&&r.exec.total?`<div class="note">Execuções reais registadas: ${r.exec.total}${r.exec.failed?` (${r.exec.failed} falhadas)`:''}${r.exec.hl&&r.exec.hl.fills?` · slippage real médio na Hyperliquid ${r.exec.hl.slipBpsMean} bps (pior ${r.exec.hl.slipBpsWorst})`:''}${r.exec.sol&&(r.exec.sol.buys||r.exec.sol.sells)?` · memecoins ${r.exec.sol.buys} compras / ${r.exec.sol.sells} vendas, resultado realizado ${usd(r.exec.sol.pnlUsd)}`:''}.</div>`:'';
+  const fe=r.feeStats&&r.feeStats.n?`<div class="note">Taxas reais cobradas pela Hyperliquid (últimas ${r.feeStats.n} execuções): taker ${r.feeStats.takerBps==null?'—':r.feeStats.takerBps+' bps'} · maker ${r.feeStats.makerBps==null?'—':r.feeStats.makerBps+' bps'}. O backtest assume 9 bps taker e 3 bps maker: se estes valores forem diferentes, o teste está errado.</div>`:'';
+  const nt=r.notifyOn===false?`<div class="note">🔕 Sem notificações (falta o segredo <code>NTFY_TOPIC</code> no worker): os avisos de emergência não chegam ao telemóvel.</div>`:'';
+  return halt+blind+ex+fe+nt;
 }
 async function resume(){
   if(!confirm('Retomar a Hyperliquid? O máximo da conta passa a ser o saldo de agora e o bot pode voltar a abrir posições.'))return;
@@ -117,7 +143,7 @@ function guardHtml(k,st){
 function gateHtml(k){
   if(k==='hl'){const g=hlGate();
     return g.ok?`<div class="note">🔓 Estratégia em uso aprovada pelo teste histórico (${esc(g.label)}) até ${new Date(g.until).toISOString().slice(0,10)}.</div>`
-      :`<div class="halt">🔒 <b>Dinheiro real bloqueado</b>: a estratégia em uso (${esc(g.label)}) ${esc(g.why)}. A app não envia nenhuma ordem à Hyperliquid enquanto nenhuma estratégia passar. As posições que já existam mantêm os stops na corretora.</div>`}
+      :`<div class="halt">🔒 <b>Dinheiro real bloqueado</b>: a estratégia em uso (${esc(g.label)}) ${esc(g.why)}. O worker recusa abrir posições na Hyperliquid enquanto nenhuma estratégia passar; fechos e stops de posições que já existam continuam a funcionar.</div>`}
   const g=memeGate();
   return g.ok?`<div class="note">🔓 O desk de memecoins em papel provou lucro (${g.n} trades, fator de lucro ${g.pf===Infinity?'∞':g.pf.toFixed(2)}): compras reais permitidas.</div>`
     :`<div class="halt">🔒 <b>Compras reais bloqueadas</b>: ${esc(g.why)}. Continua a vender o que houver na carteira.</div>`;
@@ -162,10 +188,10 @@ function onHtml(k){
   }
   return `<div class="alh"><b>${hl?'HYPERLIQUID · LIVE':'SOLANA · LIVE (MEMECOINS)'}</b><small>${modeTag(st)}</small><button class="ghost" data-k="${k}" data-a="off">DESLIGAR</button></div>
     ${e.err?`<div class="halt">⚠ ${esc(e.err)}</div>`:''}${body}
-    ${gateHtml(k)}
+    ${riskHtml()}${gateHtml(k)}
     ${st?guardHtml(k,st)+(hl?autoHtml(st):''):''}
     ${e.log.length?`<div class="note">${e.log.join('<br>')}</div>`:''}
-    <div class="pmbar"><button class="ghost" data-k="${k}" data-a="flat">FECHAR TUDO</button><button class="ghost" data-k="${k}" data-a="push">TESTAR NOTIFICAÇÃO</button></div>
+    <div class="pmbar"><button class="ghost" data-k="${k}" data-a="flat">FECHAR TUDO</button><button class="ghost" data-k="${k}" data-a="push">TESTAR NOTIFICAÇÃO</button><button class="ghost" data-k="${k}" data-a="panic">⛔ EMERGÊNCIA (TUDO)</button></div>
     ${pushMsg?`<div class="note">${esc(pushMsg)}</div>`:''}
     <div class="note">${hl?'Os stops ficam na própria Hyperliquid e protegem-te mesmo com a app fechada. O alvo é uma ordem limitada (taxa mais baixa).':(st&&st.guard&&st.guard.on?'Com a app aberta, as saídas seguem o desk. Com a app fechada, a proteção do servidor vende pelas regras acima.':'As saídas das memecoins só acontecem com a app aberta e a funcionar. Se fechares a app com posições abertas, ficam abertas.')}</div>`;
 }
@@ -184,6 +210,8 @@ function bind(){
       if(a==='off'){if(confirm('Desligar não fecha as posições abertas na corretora. Queres fechá-las agora?'))await flatten(k);L[k]=false;P[k].st=null;save();render(k)}
       if(a==='flat')flatten(k);
       if(a==='resume')resume();
+      if(a==='panic')panic();
+      if(a==='riskresume')riskResume();
       if(a==='push')testPush(k);
     });
     render(k);

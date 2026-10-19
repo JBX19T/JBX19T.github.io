@@ -68,8 +68,23 @@ O worker corre sozinho **a cada 5 minutos**, mesmo com a app fechada (cron da Cl
 - Em simulação não envia nada: só avisa o que faria.
 - **Notificações no telemóvel:** instala a app **ntfy** (Android ou iPhone, grátis, sem conta) → *+* → subscreve um tópico com um nome comprido e difícil de adivinhar (por ex. `dollos-` + letras e números ao calhas). Guarda o mesmo nome no segredo `NTFY_TOPIC` do worker. No painel, **TESTAR NOTIFICAÇÃO** confirma. Recebes um aviso a cada ordem real, a cada falha e a cada ação da proteção. Quem souber o nome do tópico lê os avisos, por isso trata-o como uma palavra-passe.
 
+### Gestão de risco central e registos (auditoria de 2026-10-19; relatório completo em `docs/AUDITORIA.md`)
+- `POST /risk/panic` fecha tudo (Hyperliquid e Solana) e bloqueia novas entradas; `POST /risk/resume` levanta; `GET /risk/state` mostra paragens, falhas da proteção, aprovações, taxas reais e execuções.
+- `GET /exec/log` e `GET /hl/fills`: o que foi **realmente** executado (preço pretendido vs executado, slippage em bps) e as taxas cobradas. É assim que se calibra o backtest.
+- A proteção também repõe o stop de uma posição que o perca (`HL_DEFAULT_STOP_PCT`, 2%), cancela ordens órfãs, insiste no fecho se falhar e avisa quando não consegue ler a corretora.
+- `POST /hl/sync` exige uma aprovação válida do teste histórico (`strategy`, `iv`, `approval`); `HL_REQUIRE_APPROVAL=0` só funciona na rede de teste.
+- `SOL_MAX_PRIORITY_LAMPORTS` (200000): teto da taxa de prioridade por transação.
+- Empacotar o worker **completo** (inclui `grokbot/strategy.js` e `grokbot/backtest.js`, de que o código e os testes dependem): `npm run pack` dentro de `worker/` (ou `node scripts/pack-worker.mjs`).
+
+### Day trade e swing
+Modos `daytrade` (fecha no fim do dia UTC, sem entradas nas últimas 2 h) e `swing` (velas 4h/1d, stop móvel). Podem ser executados em real, mas só com a aprovação própria da estratégia e das velas. O piloto automático aplica o fecho de fim do dia e a janela sem entradas.
+
+### Scalping
+O Macro Desk e o teste histórico têm um modo de **scalping** (velas de 1 e 5 min), só para papel e backtest. O worker **recusa sempre** abrir posições com estratégia `scalp` ou velas de 1/5 min
+(o worker sincroniza de 30 s a 5 min; não serve para scalping). Não há variável para o permitir.
+
 ### Trava do dinheiro real
-- **Hyperliquid:** a app só envia ordens se a estratégia em uso, com o tamanho de velas em uso, tiver passado o teste em duas partes do TESTE HISTÓRICO há menos de 45 dias. Para passar, a 2.ª parte precisa de 30+ trades, ganho médio > 0, fator de lucro > 1,1 e t ≥ 2. Sem isso, o painel mostra 🔒 e nada é enviado.
+- **Hyperliquid:** a app só envia ordens se a estratégia em uso, com o tamanho de velas em uso, tiver passado o teste em duas partes do TESTE HISTÓRICO há menos de 45 dias. Para passar, a 2.ª parte precisa de 30+ trades, ganho médio > 0, fator de lucro > 1,1 e t ≥ 2,5. Sem isso, o painel mostra 🔒 e nada é enviado.
 - **Memecoins:** só há compras reais se o desk de memecoins em papel já tiver 30+ trades fechadas, resultado positivo e fator de lucro > 1,1. As vendas continuam sempre.
 - **Piloto automático:** a app envia a aprovação para `POST /hl/approve`, e o worker volta a verificar os números. Sem aprovação válida, o piloto não abre posições novas; só gere as que existem.
 

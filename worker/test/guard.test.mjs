@@ -12,7 +12,7 @@ function fakeHL(eqs, { live = true, positions = [{ coin: 'xyz:GOLD', szi: 1 }], 
   let i = 0; const H = { flat: 0, syncs: [], positions };
   H.hl = { live, network: 'testnet',
     state: async () => ({ account: { main: 1, xyz: eqs[Math.min(i++, eqs.length - 1)] }, positions: H.positions, markets: { GOLD: { coin: 'xyz:GOLD' }, SPX: { coin: 'xyz:SP500' }, EURUSD: null } }),
-    flatten: async () => { H.flat++; return { mode: live ? 'real' : 'simulacao', results: [] }; },
+    flatten: async () => { H.flat++; if (live) H.positions = []; return { mode: live ? 'real' : 'simulacao', results: [] }; },   // em modo real o fecho funciona: a posição desaparece
     candles: async () => candles,
     sync: async (d, o) => { H.syncs.push({ d, o }); const plan = Object.entries(d).filter(([k]) => !H.positions.some(p => p.coin === 'xyz:' + (k === 'SPX' ? 'SP500' : k))).map(([k, w]) => ({ op: 'open', market: k, side: w.side === 'long' ? 'buy' : 'sell', usd: 10, sl: 1, tp: 2 }));
       return { mode: live ? 'real' : 'simulacao', plan, results: live ? plan.map(p => ({ op: 'open', market: p.market, ok: true })) : [], skipped: [] }; } };
@@ -74,8 +74,10 @@ function fakeSol(tokens, values, { live = true, fail = {} } = {}) {
 {
   const S = store(), N = notifier(), now = Date.now();
   const F = fakeSol([{ mint: MA }], { [MA]: 1 }, { live: false });
+  await S.put('solEntries', { [MA]: { t: now - 1000, usd: 2 } });   // entrada registada ($2): agora vale $1 (-50%)
   await guardSol({ env: {}, sol: F.sol, store: S, notify: N, now }); await guardSol({ env: {}, sol: F.sol, store: S, notify: N, now: now + 5 * 60e3 });
   assert.equal(N.sent.length, 1, 'simulação avisa uma vez'); assert.match(N.sent[0].m, /Simulação: venderia/);
+  await S.put('solEntries', { [MA]: { t: now - 1000, usd: 2 }, [MB]: { t: now - 1000, usd: 2 } });
   const F2 = fakeSol([{ mint: MB }], { [MB]: 1 }, { fail: { [MB]: 'sem rota' } }); const r = await guardSol({ env: {}, sol: F2.sol, store: S, notify: N, now });
   assert.equal(r.actions[0].ok, false); assert.equal(N.sent.at(-1).o.priority, 5); console.log('ok   6 simulação avisa uma vez; venda falhada avisa com prioridade máxima');
 }
@@ -90,7 +92,7 @@ function fakeSol(tokens, values, { live = true, fail = {} } = {}) {
 
 // ---- piloto automático ----
 const T = 9e5, now = Date.UTC(2026, 9, 18, 12, 1);   // 1 min depois do fecho de uma vela de 15 min
-function series(n, f) { const out = []; const t0 = Math.floor(now / T) * T - n * T; for (let i = 0; i < n; i++) { const c = f(i); out.push([t0 + i * T, c, c * 1.002, c * 0.998, c, 1]); } return out; }
+function series(n, f) { const out = []; const t0 = Math.floor(now / T) * T - n * T; for (let i = 0; i < n; i++) { const c = f(i); out.push([t0 + i * T, c, c * 1.006, c * 0.994, c, 1]); } return out; }
 {
   // tendência de alta e rompimento na última vela fechada; a vela em formação (t >= now - T) é ignorada
   const up = series(120, i => (i < 119 ? 4000 + i * 0.5 + Math.sin(i) * 2 : 4100));
@@ -143,7 +145,7 @@ function series(n, f) { const out = []; const t0 = Math.floor(now / T) * T - n *
   let r = await runAutopilot({ env, hl: H.hl, store: S, notify: notifier(), now });
   assert.equal(r.approved, false); assert.match(H.syncs[0].o.blockOpen, /sem aprovação/);
   H = mk(); S = store();
-  await S.put('approvals', { 'breakout|15m': { strategy: 'breakout', iv: '15m', at: now - 864e5, n: 35, avgR: .15, pf: 1.25, tR: 2.2 } });
+  await S.put('approvals', { 'breakout|15m': { strategy: 'breakout', iv: '15m', at: now - 864e5, n: 35, avgR: .15, pf: 1.25, tR: 3.0 } });
   r = await runAutopilot({ env, hl: H.hl, store: S, notify: notifier(), now });
   assert.equal(r.approved, true); assert.equal(H.syncs[0].o.blockOpen, null);
   console.log('ok   12 piloto: sem aprovação do teste não abre nada; com aprovação abre');
