@@ -87,7 +87,7 @@ const MA = 'A'.repeat(43), MB = 'B'.repeat(43);
   const want = { GOLD: { side: 'long', frac: 0.5, slPct: 0.01, tpPct: 0.015 } };
   let j = await sync({ desired: want });
   assert.equal(j.plan.filter(p => p.op === 'open').length, 0, 'sem aprovação não pode planear aberturas'); assert.match(JSON.stringify(j.skipped), /aprova/i);
-  const good = { strategy: 'trail', iv: '4h', at: Date.now() - 1000, n: 40, avgR: .2, pf: 1.3, tR: 2.4 };
+  const good = { strategy: 'trail', iv: '4h', at: Date.now() - 1000, n: 40, avgR: .2, pf: 1.3, tR: 3.0 };
   j = await sync({ desired: want, strategy: 'trail', iv: '4h', approval: good }); assert.equal(j.plan.filter(p => p.op === 'open').length, 1, 'com aprovação válida abre');
   j = await sync({ desired: want, strategy: 'trail', iv: '4h', approval: { ...good, n: 5 } }); assert.equal(j.plan.filter(p => p.op === 'open').length, 1, 'a aprovação válida já guardada continua a valer');
   j = await sync({ desired: want, strategy: 'breakout', iv: '15m' }); assert.equal(j.plan.filter(p => p.op === 'open').length, 0, 'outra estratégia continua bloqueada');

@@ -8,7 +8,7 @@
 import DS from '../grokbot/strategy.js';
 import { MARKET_KEYS } from './hl.mjs';
 
-const IV_MS = { '15m': 9e5, '1h': 36e5, '4h': 144e5 };
+const IV_MS = { '1m': 6e4, '5m': 3e5, '15m': 9e5, '1h': 36e5, '4h': 144e5 };
 const WINDOW_MS = 6 * 60e3;   // só decide nos primeiros minutos depois do fecho de uma vela (o cron corre a cada 5 min)
 
 export function autopilotCfg(env) {
@@ -30,6 +30,7 @@ export async function runAutopilot({ env, hl, store, notify, now = Date.now(), s
   const approvals = (await store.get('approvals')) || {};
   const approved = DS.approvalOk(approvals[A.strategy + '|' + A.iv], A.strategy, A.iv, now);
   if (!approved) blockOpen = blockOpen || `sem aprovação do teste histórico para ${A.label} · ${A.iv}`;
+  if (DS.isScalp(A.strategy, A.iv)) blockOpen = 'scalping não é executado em real: o worker sincroniza de 5 em 5 min';
   const desired = {}, notes = {}, barOf = {}, atrOf = {};
   for (const k of MARKET_KEYS) {
     const coin = st.markets && st.markets[k] && st.markets[k].coin;

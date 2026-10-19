@@ -68,8 +68,8 @@ const liveCfg = { start: 10000, riskPct: .01, maxLev: 5, fast: 20, slow: 50, brk
   const worst = Math.min(...stops.map(t => t.pnl), 0);
   assert.ok(worst > -10000 * 0.02, 'perdas de stop ficam perto de 1% (sem saltos): ' + worst.toFixed(2));
   console.log('ok   6b equity final = 10000 + soma dos P/L; pior stop $' + worst.toFixed(2));
-  const all = BT.runAll(data, liveCfg); assert.equal(all.variants.length, 7); assert.ok(all.main.s.n >= 0);
-  console.log('ok   6c runAll devolve principal + 7 variantes:', all.variants.map(v => v.label + ' ' + v.s.n + ' trades').join(' | '));
+  const all = BT.runAll(data, liveCfg); assert.equal(all.variants.length, 8); assert.ok(all.main.s.n >= 0);
+  console.log('ok   6c runAll devolve principal + 8 variantes:', all.variants.map(v => v.label + ' ' + v.s.n + ' trades').join(' | '));
 }
 // 7) tendência forte e limpa: a estratégia tem de ganhar (sinal de que a lógica está do lado certo)
 {
@@ -131,7 +131,7 @@ console.log('backtest ok');
   const a = BT.simulate(data, liveCfg, { to: mid }), b = BT.simulate(data, liveCfg, { from: mid });
   assert.ok(a.trades.every(t => t.o < mid && t.c < mid), 'parte A só antes'); assert.ok(b.trades.every(t => t.o >= mid), 'parte B só depois');
   const R = BT.research(data, liveCfg);
-  assert.equal(R.rows.length, 10); assert.equal(R.split, data.GOLD[1800].t);
+  assert.equal(R.rows.length, 12); assert.equal(R.split, data.GOLD[1800].t);
   if (R.best) { const cands = R.rows.filter(r => r.A.n >= R.minA); assert.ok(cands.every(r => r.A.avgR <= R.best.A.avgR), 'escolhida só pela parte A'); }
   console.log('ok   13 duas partes:', R.rows.map(r => r.strategy + '/' + r.exec + ' A' + r.A.n + ' B' + r.B.n).join(' | '), '· aprovada:', R.pass);
 }
@@ -177,12 +177,12 @@ console.log('backtest ok');
 }
 // 17) trava do dinheiro real
 {
-  const now = Date.now(), a = { strategy: 'trail', iv: '4h', at: now - 864e5, n: 40, avgR: .2, pf: 1.3, tR: 2.4 };
+  const now = Date.now(), a = { strategy: 'trail', iv: '4h', at: now - 864e5, n: 40, avgR: .2, pf: 1.3, tR: 3.0 };
   assert.equal(DS.approvalOk(a, 'trail', '4h', now), true);
   assert.equal(DS.approvalOk(a, 'trail', '1h', now), false, 'outras velas não');
   assert.equal(DS.approvalOk(a, 'breakout', '4h', now), false, 'outra estratégia não');
   assert.equal(DS.approvalOk({ ...a, at: now - 46 * 864e5 }, 'trail', '4h', now), false, 'expira aos 45 dias');
-  for (const bad of [{ n: 29 }, { avgR: 0 }, { pf: 1.1 }, { tR: 1.9 }, { at: now + 36e5 }]) assert.equal(DS.approvalOk({ ...a, ...bad }, 'trail', '4h', now), false, JSON.stringify(bad));
+  for (const bad of [{ n: 29 }, { avgR: 0 }, { pf: 1.1 }, { tR: 2.4 }, { at: now + 36e5 }]) assert.equal(DS.approvalOk({ ...a, ...bad }, 'trail', '4h', now), false, JSON.stringify(bad));
   assert.equal(DS.approvalOk(null, 'trail', '4h', now), false);
   console.log('ok   17 trava: só a estratégia e as velas aprovadas, com os números exigidos, durante 45 dias');
 }

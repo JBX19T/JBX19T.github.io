@@ -47,7 +47,7 @@ console.log('alpaca removida ok');
   const j = await ok.json();
   assert.equal(j.markets.GOLD.coin, 'xyz:GOLD'); assert.deepEqual(j.markets.GOLD.bars[0], [1, 1, 3, 0.5, 2, 10]);
   assert.ok(urls.every(u => u.startsWith('https://api.hyperliquid.xyz/')), 'sempre na rede real: ' + urls[0]);
-  assert.equal((await ask({ interval: '5m' })).status, 502);
+  assert.equal((await ask({ interval: '2m' })).status, 502);
   assert.equal((await ask({ interval: '15m' }, 'errado')).status, 401);
   globalThis.fetch = prev;
   console.log('candles ok');
@@ -85,8 +85,8 @@ console.log('alpaca removida ok');
   assert.equal(s.autopilot, true); assert.equal(s.plan.length, 0);
   st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'reversion' } })).json(); assert.equal(st.autopilot.strategy, 'reversion');
   // aprovação do teste histórico: o worker volta a verificar os números
-  r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 12, avgR: .3, pf: 1.5, tR: 2.5 } }); assert.equal(r.status, 400);
-  r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 40, avgR: .2, pf: 1.3, tR: 2.4, at: Date.now() - 1000 } }); assert.equal(r.status, 200);
+  r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 12, avgR: .3, pf: 1.5, tR: 3.0 } }); assert.equal(r.status, 400);
+  r = await ask('/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 40, avgR: .2, pf: 1.3, tR: 3.0, at: Date.now() - 1000 } }); assert.equal(r.status, 200);
   st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'trail', HL_INTERVAL: '4h' } })).json(); assert.equal(st.autopilot.approved, true);
   st = await (await ask('/hl/state', { e: { ...env2, HL_AUTOPILOT: '1', HL_STRATEGY: 'trail', HL_INTERVAL: '1h' } })).json(); assert.equal(st.autopilot.approved, false);
   // worker antigo sem memória: tudo continua a funcionar, só a proteção fica desligada

@@ -153,6 +153,7 @@ function runAll(barsByKey,cfg,opts={}){
     run('alavancagem 5×',{maxLev:5}),
     run('slippage 3× maior',{slipBps:(cfg.slipBps||0)*3||9,slipStopBps:(cfg.slipStopBps??cfg.slipBps??0)*3||15}),
     run('sem slippage (irreal)',{slipBps:0,slipStopBps:0}),
+    run('sem filtro de custo (só para ver o estrago)',{minATRpct:0}),
     run('ordens limitadas (maker)',{exec:'maker'}),
   ];
   return{main,variants,research:research(barsByKey,opts.base||cfg,opts)};   // a comparação parte das regras base, não da estratégia em uso
@@ -161,14 +162,15 @@ function runAll(barsByKey,cfg,opts={}){
 /* teste honesto em duas partes ("walk-forward"): escolhe a melhor combinação só com a 1.ª parte (60% do período)
    e mede-a na 2.ª parte, que a escolha nunca viu. Só a 2.ª parte diz alguma coisa sobre o futuro.
    Para passar, a 2.ª parte tem de ter 30+ trades, ganhar em média, fator de lucro > 1,1 e a média tem de estar
-   2 erros padrão acima de zero (com 6 combinações à escolha, sem esta exigência o puro acaso passa muitas vezes). */
-const MIN_A=10,MIN_B=30,MIN_T=2;
+   2,5 erros padrão acima de zero (com 6 combinações à escolha, sem esta exigência o puro acaso passa muitas vezes). */
+const MIN_A=10,MIN_B=30,MIN_T=D.APPROVAL_MIN_T;
 function research(barsByKey,cfg,opts={}){
   const times=[...new Set(Object.values(barsByKey).flatMap(b=>(b||[]).map(x=>x.t)))].sort((a,b)=>a-b);
   if(times.length<50)return{rows:[],best:null,pass:false,split:null};
   const split=times[Math.floor(times.length*(opts.split||0.6))];
   const rows=[];
-  for(const strategy of Object.keys(D.PRESETS))for(const exec of ['taker','maker']){
+  const names=opts.only&&opts.only.length?opts.only:Object.keys(D.PRESETS);   // em velas de scalping só se compara o scalping
+  for(const strategy of names)for(const exec of ['taker','maker']){
     const o={strategy,override:{exec},funding:opts.funding};
     rows.push({strategy,exec,label:D.PRESETS[strategy].label+(exec==='maker'?' · limitadas':' · a mercado'),
       A:summarize(simulate(barsByKey,cfg,{...o,to:split})),B:summarize(simulate(barsByKey,cfg,{...o,from:split}))});

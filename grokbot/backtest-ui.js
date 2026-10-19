@@ -6,7 +6,7 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 const usd=v=>(v>0?'+$':v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const pct=v=>v==null||!isFinite(v)?'—':(v>=0?'+':'')+(v*100).toFixed(1)+'%';
 const dt=t=>new Date(t).toISOString().slice(0,10);
-const IV={'15m':{label:'15 min · cerca de 50 dias',note:'as mesmas velas do Macro Desk'},'1h':{label:'1 hora · cerca de 7 meses',note:'teste de robustez: a estratégia foi feita para 15 min'},'4h':{label:'4 horas · até cerca de 2 anos',note:'robustez com velas maiores (o custo pesa menos); o período real pode ser mais curto se o mercado for mais recente'}};
+const IV={'1m':{label:'1 min · cerca de 3 dias (scalping)',note:'SCALPING: a Hyperliquid só guarda 5000 velas (3 dias de 1 min); com «Histórico longo» a Binance dá ~20 dias. Quase sempre sem trades: o custo de ida e volta vale muitos R com stops tão curtos'},'5m':{label:'5 min · cerca de 17 dias (scalping)',note:'SCALPING: a Hyperliquid só guarda 5000 velas (17 dias de 5 min); com «Histórico longo» a Binance dá ~100 dias. Compara só o scalping, com ordens a mercado e limitadas'},'15m':{label:'15 min · cerca de 50 dias',note:'as mesmas velas do Macro Desk'},'1h':{label:'1 hora · cerca de 7 meses',note:'teste de robustez: a estratégia foi feita para 15 min'},'4h':{label:'4 horas · até cerca de 2 anos',note:'robustez com velas maiores (o custo pesa menos); o período real pode ser mais curto se o mercado for mais recente'}};
 let state={busy:false,msg:'',err:'',res:null,iv:'15m',coins:null,src:'hl'};
 /* origem das velas: os mercados reais da Hyperliquid (curtos: só existem há ~300 dias) ou um histórico longo desde 2020
    na Binance (ouro através do PAXG, EUR/USD através do EURUSDT; sem S&P 500), que dá centenas de trades para confirmar */
@@ -14,7 +14,7 @@ const SRC={hl:{label:'Hyperliquid (mercados reais, ~300 dias)'},long:{label:'His
 const api=()=>typeof HOLDERS_API==='string'?HOLDERS_API:'';
 const token=()=>window.LIVE&&LIVE.L.token||'';
 
-const HL='https://api.hyperliquid.xyz/info',MS={'15m':9e5,'1h':36e5,'4h':144e5};
+const HL='https://api.hyperliquid.xyz/info',MS={'1m':6e4,'5m':3e5,'15m':9e5,'1h':36e5,'4h':144e5};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const DEFAULT_COINS={GOLD:'xyz:GOLD',SPX:'xyz:SP500',EURUSD:'xyz:EUR'};   // nomes que o painel HYPERLIQUID já mostrou; se o painel os tiver, usa esses
 function knownCoins(){
@@ -43,7 +43,7 @@ async function fetchDirect(iv){
 /* 2.º caminho (plano B): pelo worker */
 async function fetchViaWorker(iv){
   const f=window.CapacitorWebFetch||fetch;
-  const r=await f(api()+'/hl/candles',{method:'POST',headers:{'x-token':token(),'content-type':'application/json'},body:JSON.stringify({interval:iv,days:iv==='15m'?52:iv==='1h'?210:840})});
+  const r=await f(api()+'/hl/candles',{method:'POST',headers:{'x-token':token(),'content-type':'application/json'},body:JSON.stringify({interval:iv,days:iv==='1m'?3.4:iv==='5m'?17:iv==='15m'?52:iv==='1h'?210:840})});
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;
 }
 async function fetchCandles(iv){
@@ -125,7 +125,8 @@ async function run(){
     if(!long)try{state.msg='a descarregar o histórico de funding…';render();fund=await fetchFunding(Object.fromEntries(ks.map(k=>[k,coins[k]])),from,to)}catch(e){}
     const nS=Object.keys(DSTRAT.PRESETS).length;
     state.msg=`a simular ${nS} estratégias × 2 tipos de ordem${long?' sobre anos de velas (pode demorar uns segundos)':''}…`;render();await new Promise(r=>setTimeout(r,30));
-    const all=BT.runAll(bars,MACRO.CFG,{funding:fund.funding,base:MACRO.BASE});
+    const scalp=DSTRAT.SCALP_INTERVALS.includes(state.iv);   // em velas de 1/5 min só faz sentido testar o scalping (com os parâmetros próprios)
+    const all=BT.runAll(bars,scalp?DSTRAT.withStrategy(MACRO.BASE,'scalp'):MACRO.CFG,{funding:fund.funding,base:MACRO.BASE,only:scalp?['scalp']:null});
     state.res={all,coins,iv:state.iv,long,cover:fund.cover,missing:(long?['GOLD','EURUSD']:['GOLD','SPX','EURUSD']).filter(k=>!bars[k])};state.err='';
     const X=all.research;if(X.pass)approve(X.best,state.iv);
   }catch(e){state.err=e.message}
@@ -197,7 +198,7 @@ function resHtml(){
   const bh=Object.entries(s.bh).map(([k,v])=>`${names[k]||k} ${pct(v)}`).join(' · ');
   const vars=R.all.variants.map(x=>`<tr><td>${esc(x.label)}</td><td>${x.s.n}</td><td class="${x.s.net>=0?'up':'dn'}">${pct(x.s.netPct)}</td><td>${x.s.pf==null?'—':x.s.pf===Infinity?'∞':x.s.pf.toFixed(2)}</td><td>${(x.s.maxDD*100).toFixed(1)}%</td></tr>`).join('');
   const cov=Object.entries(R.cover||{}).map(([k,v])=>`${names[k]||k} ${Math.round(v*100)}%`).join(' · ');
-  return`<div class="rs"><h4>RESULTADO · ${esc(P_(s.strategy).short.toUpperCase())}<small>${({'15m':'velas de 15 min','1h':'velas de 1 h','4h':'velas de 4 h'})[R.iv]} · ${s.days.toFixed(0)} dias${R.long?' · Binance':''}</small></h4>
+  return`<div class="rs"><h4>RESULTADO · ${esc(P_(s.strategy).short.toUpperCase())}<small>${({'15m':'velas de 15 min','1h':'velas de 1 h','4h':'velas de 4 h','1m':'velas de 1 min','5m':'velas de 5 min'})[R.iv]} · ${s.days.toFixed(0)} dias${R.long?' · Binance':''}</small></h4>
     ${row('Período',`${dt(s.from)} → ${dt(s.to)}`)}
     ${row('Trades',`${s.n} · ${s.wins}W ${s.losses}L`)}
     ${row('Taxa de acerto',s.winRate==null?'—':(s.winRate*100).toFixed(0)+'%')}
@@ -232,7 +233,7 @@ function render(){
   el.innerHTML=`<div class="note">Corre as <b>mesmas regras do Macro Desk</b> (mesmo risco, alavancagem, custos de 9 bps e paragens de -20% e -5%) sobre velas reais passadas de ouro, S&amp;P 500 e EUR/USD da Hyperliquid, com o funding real. Depois compara ${Object.keys(DSTRAT.PRESETS).length} estratégias (${Object.values(DSTRAT.PRESETS).map(p=>p.short).join(', ')}) com ordens a mercado e limitadas, num teste em duas partes. Não envia ordens nem gasta nada. A Hyperliquid só guarda as últimas 5000 velas por mercado. Convenções: o sinal nasce ao fecho da vela e a ordem enche à abertura da seguinte, com taxa e slippage; o alvo é uma ordem limitada (taxa maker); o stop paga slippage; só entra se o custo de ida e volta for no máximo 15% do risco. O slippage (3 bps, stops 5 bps) é uma SUPOSIÇÃO até haver execuções reais medidas (ver «Execuções reais registadas» no painel da Hyperliquid).</div>
     ${token()?'':`<div class="pmbar"><input id="btTok" type="password" autocomplete="off" placeholder="token do worker (APP_TOKEN)"></div>`}
     <div class="pmbar"><select id="btSrc">${Object.entries(SRC).map(([k,v])=>`<option value="${k}" ${state.src===k?'selected':''}>${v.label}</option>`).join('')}</select></div>
-    ${state.src==='long'?`<div class="note">Histórico longo: velas spot da Binance desde 2020 (ouro = PAXG, EUR/USD = EURUSDT), só em 1 h e 4 h. Dá muitas mais trades para a 2.ª parte e por isso um veredicto mais fiável. Não tem S&amp;P 500 nem funding; os custos são os mesmos (9 bps).${state.iv==='15m'?' <b>Em 15 min usa a Hyperliquid.</b>':''}</div>`:''}
+    ${state.src==='long'?`<div class="note">Histórico longo: velas spot da Binance desde 2020 (ouro = PAXG, EUR/USD = EURUSDT), em 1 h e 4 h (e 1/5 min para scalping). Dá muitas mais trades para a 2.ª parte e por isso um veredicto mais fiável. Não tem S&amp;P 500 nem funding; os custos são os mesmos (9 bps).${state.iv==='15m'?' <b>Em 15 min usa a Hyperliquid.</b>':''}</div>`:''}
     <div class="pmbar"><select id="btIv">${sel}</select><button class="ghost" id="btRun" ${state.busy?'disabled':''}>${state.busy?'A CORRER…':'CORRER TESTE'}</button></div>
     <div class="note">${esc(IV[state.iv].note)}</div>
     ${state.msg?`<div class="note">${esc(state.msg)}</div>`:''}${state.err?`<div class="halt">⚠ ${esc(state.err)}</div>`:''}${resHtml()}`;

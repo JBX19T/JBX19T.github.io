@@ -93,8 +93,8 @@ Alterados — app: `strategy.js`, `backtest.js`, `macro.js`, `live.js`, `results
 ## 6. Testes executados e resultados
 
 Antes de qualquer alteração: `node --test` em `worker/` → **6 ficheiros, 6 aprovados** (mas o zip enviado não os conseguia correr, C1).
-Depois: **10 ficheiros, 10 aprovados, 0 falhas** (`node --test`, Node 22). Linhas `ok` por ficheiro:
-`audit` 10 · `backtest` 20 · `guard` 13 · `hl_flow` 26 · `hl_sign` 5 · `macro` 6 · `pack` 2 · `risk` 8 · `router` (4 blocos) · `sol` 24.
+Depois: **11 ficheiros, 11 aprovados, 0 falhas** (`node --test`, Node 22). Linhas `ok` por ficheiro:
+`audit` 10 · `backtest` 20 · `guard` 13 · `hl_flow` 26 · `hl_sign` 5 · `macro` 6 · `pack` 2 · `risk` 8 · `router` (4 blocos) · `scalp` 6 · `sol` 24.
 Também corridos em Chromium sem janela, com respostas simuladas da Hyperliquid, do worker e da Binance: painel do teste histórico (inclui histórico longo e
 exportação CSV), painéis HYPERLIQUID/SOLANA (paragem global, RETOMAR TUDO, EMERGÊNCIA, slippage real), desk em papel com o feed da Hyperliquid
 (nenhum pedido ao Lighter), desk de memecoins em demo (fecho com custos). **Sem erros de página.**
@@ -152,7 +152,7 @@ Nas 54 trades de 4 h que passariam, o R líquido seria −0,122 e o bruto −0,0
 - A aprovação estatística é **atestada pela app**: o worker valida os números e as datas, mas não recalcula o teste (não cabe no tempo de CPU do plano grátis). Um cliente malicioso com o token poderia forjá-la.
 - O desk de memecoins em papel não tem stops de volatilidade nem dados de custo reais; para bilhetes de $2 os custos fixos pesam muito (ver abaixo).
 - Stops e alvos do desk em papel avaliam-se a cada 15 s, não a cada negociação; picos entre leituras não aparecem.
-- O backtest usa uma única divisão 60/40; repetir o teste vezes demais pode produzir um falso positivo por acaso (a regra `t ≥ 2` não corrige testes repetidos).
+- O backtest usa uma única divisão 60/40; repetir o teste vezes demais pode produzir um falso positivo por acaso (a regra `t ≥ 2,5` reduz mas não elimina isso: cada corrida tem cerca de 0,6% de hipótese de passar por acaso, e 10 corridas somam ~6%).
 - O worker só gere os três mercados mapeados; posições noutros mercados da conta não são fechadas.
 - Se o plano grátis da Cloudflare limitar pedidos, a proteção de 5 em 5 minutos pode atrasar.
 
@@ -176,3 +176,30 @@ O desk em papel tem alvo +35% e stop −14%: custos de 5–11% por ida e volta s
 **Etapa 3 — semanas em papel** com o feed novo; só reabrir a conversa sobre dinheiro real se uma estratégia **passar** o teste (e, de preferência, com o slippage e a taxa já medidos e substituídos nas suposições).
 
 **Antes de qualquer passagem a produção:** `HL_NETWORK=mainnet` exige ainda `HL_CONFIRM_MAINNET=YES` e uma aprovação válida; começa com o menor valor possível. Nenhuma promessa de lucro é feita aqui.
+
+---
+
+## 11. Modo scalping (adicionado depois da auditoria)
+
+**O que é:** uma sexta família, `scalp`, para velas de **1 min e 5 min**: reversão curta (fecho a mais de 2,2 desvios-padrão da média de 20 velas),
+stop 1,2×ATR, alvo 1×ATR, no máximo 12 velas. Parâmetros fixados a priori (convenção Bollinger), não afinados. Escolhe-se no Macro Desk
+(menu «Modo»: *Padrão · rompimento · 15 min*, *Scalping · 5 min*, *Scalping · 1 min*) e no teste histórico (opções de 1 min e 5 min).
+Nas velas de scalping o teste compara só o scalping, com ordens a mercado e limitadas, e mostra a variante «sem filtro de custo (só para ver o estrago)».
+
+**O que NÃO faz, de propósito:**
+1. **Não executa em real.** O worker sincroniza de 30 s (app aberta) a 5 min (cron); uma ordem de scalping chegaria minutos depois do sinal, quando o movimento já passou.
+   O `/hl/sync` e o piloto automático recusam abrir quando a estratégia é `scalp` ou as velas são de 1/5 min, **mesmo com aprovação válida** e na rede de teste (teste `S4`).
+   Para executar scalping a sério seria preciso um serviço com WebSocket e ordens limitadas (maker) geridas em segundos; isso não existe aqui.
+2. **Não afrouxa o filtro de custo** (continua 15% do risco): afrouxá-lo só serviria para o bot operar mais e perder mais.
+
+**Porque quase nunca opera (matemática, não opinião):** `custo_R = 2 × custo ÷ distância do stop`. Em velas de 5 min o ouro tem ATR ≈ 0,1%; com stop de 1,2×ATR ≈ 0,12–0,14%
+e custo de ida e volta de 0,18% (9 bps por lado), o custo vale **mais de 1 R**. Medido no mercado simulado sem vantagem (teste `S2`, 20 000 velas de 5 min, ouro e EUR/USD):
+**sem o filtro, 2 245 trades com custo médio 3,5 R e resultado médio −3,5 R por trade; com o filtro, 0 trades.** No desk em papel o cartão do ouro mostra «custo 1,46 R por trade (máx. 0,15)».
+Para o scalping ser viável seria preciso, ao mesmo tempo, taxas muito mais baixas (maker nos dois lados) e uma vantagem real por trade acima do custo; nenhuma das duas está demonstrada.
+
+**Como testar:** painel TESTE HISTÓRICO → 5 min (ou 1 min) → CORRER TESTE; opcionalmente «Histórico longo» (Binance: ~100 dias de 5 min, ~20 dias de 1 min).
+A Hyperliquid só guarda 5000 velas (17 dias de 5 min; 3 dias de 1 min), por isso o veredicto em velas de 1 min é sempre fraco.
+
+### Correção ao controlo estatístico (secção 6)
+Com 6 famílias × 2 execuções, em séries **sem vantagem** o critério `t ≥ 2` deixava passar cerca de 2–3% por corrida (1 em 40 na primeira medição).
+O limiar passou a **t ≥ 2,5** (`APPROVAL_MIN_T`), fixado pela taxa de falsos positivos em dados aleatórios, não pelos resultados reais. Medição final em dados aleatórios: ver abaixo.

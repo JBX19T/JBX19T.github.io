@@ -198,6 +198,7 @@ export default {
             if (A.on) return json({ network: hl.network, mode: hl.live ? 'real' : 'simulacao', autopilot: true, plan: [], results: [], skipped: [{ market: 'todos', reason: 'piloto automático no servidor ligado: é o worker que decide' }] }, 200, ns);
             const g = await hlGuard(), now = Date.now();
             let blockOpen = (await riskHalt()) ? 'PARAGEM GLOBAL ativa (toca em RETOMAR TUDO)' : g.halted ? 'parado pela proteção do servidor (toca em RETOMAR)' : null;
+            if (!blockOpen && DS.isScalp(String(body.strategy || ''), String(body.iv || ''))) blockOpen = 'scalping não é executado em real (o worker sincroniza de 30 s a 5 min; a ordem chegaria minutos depois do sinal)';
             if (!blockOpen && !(env.HL_REQUIRE_APPROVAL === '0' && hl.network === 'testnet')) {   // na rede real a aprovação é sempre obrigatória
               const ap = await approvalFor(store, body, now);
               if (!ap.ok) blockOpen = `sem aprovação válida do teste histórico para ${ap.strategy || '(estratégia não enviada)'} · ${ap.iv || '?'}`;

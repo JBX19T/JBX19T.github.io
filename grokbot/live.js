@@ -43,6 +43,7 @@ function hlGate(){
     const c=(window.MACRO&&MACRO.CHOICE)||{strategy:'breakout',iv:'15m'};
     const all=JSON.parse(localStorage.getItem('dollosApprovalV2')||'{}')||{},a=all[c.strategy+'|'+c.iv];
     const label=`${DSTRAT.PRESETS[c.strategy].label} · ${c.iv}`;
+    if(DSTRAT.isScalp(c.strategy,c.iv))return{ok:false,label,why:'é scalping: só corre em papel e no teste histórico (o worker sincroniza de 30 s a 5 min, o que não serve para scalping)'};
     if(DSTRAT.approvalOk(a,c.strategy,c.iv))return{ok:true,label,until:a.at+DSTRAT.APPROVAL_DAYS*864e5};
     return{ok:false,label,why:a&&a.at?'a aprovação expirou (refaz o teste)':'não passou no teste histórico'};
   }catch(e){return{ok:false,label:'?',why:'sem dados'}}

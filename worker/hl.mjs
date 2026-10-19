@@ -290,10 +290,10 @@ export function makeHL(env, f = fetch) {
   }
 
   // histórico de velas para o teste histórico (só leitura). A Hyperliquid só guarda as últimas 5000 velas por mercado.
-  const IV_MS = { '15m': 9e5, '1h': 36e5, '4h': 144e5 };
+  const IV_MS = { '1m': 6e4, '5m': 3e5, '15m': 9e5, '1h': 36e5, '4h': 144e5 };
   async function candles(interval = '15m', days = 50) {
     const ms = IV_MS[interval];
-    if (!ms) throw new Error('intervalo inválido (15m, 1h ou 4h)');
+    if (!ms) throw new Error('intervalo inválido (1m, 5m, 15m, 1h ou 4h)');
     const d = await discover();
     const end = Date.now(), start = Math.floor(end - Math.min(Math.max(+days || 1, 1) * 864e5, 5000 * ms));
     const markets = {};

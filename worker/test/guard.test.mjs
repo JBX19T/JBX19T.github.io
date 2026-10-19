@@ -145,7 +145,7 @@ function series(n, f) { const out = []; const t0 = Math.floor(now / T) * T - n *
   let r = await runAutopilot({ env, hl: H.hl, store: S, notify: notifier(), now });
   assert.equal(r.approved, false); assert.match(H.syncs[0].o.blockOpen, /sem aprovação/);
   H = mk(); S = store();
-  await S.put('approvals', { 'breakout|15m': { strategy: 'breakout', iv: '15m', at: now - 864e5, n: 35, avgR: .15, pf: 1.25, tR: 2.2 } });
+  await S.put('approvals', { 'breakout|15m': { strategy: 'breakout', iv: '15m', at: now - 864e5, n: 35, avgR: .15, pf: 1.25, tR: 3.0 } });
   r = await runAutopilot({ env, hl: H.hl, store: S, notify: notifier(), now });
   assert.equal(r.approved, true); assert.equal(H.syncs[0].o.blockOpen, null);
   console.log('ok   12 piloto: sem aprovação do teste não abre nada; com aprovação abre');

@@ -75,7 +75,7 @@ const env = () => { const { f } = exchange(); return { env: { ALLOWED_ORIGIN: 'h
 const call = (e, path, { method = 'GET', body } = {}) => worker.fetch(new Request('https://w.example' + path, { method, headers: { Origin: 'https://jbx19t.github.io', 'x-token': 'segredo', 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }), e, { waitUntil() {} });
 const prev = globalThis.fetch;
 const want = { GOLD: { side: 'long', frac: 0.6, slPct: 0.01, tpPct: 0.015 } };
-const good = () => ({ strategy: 'trail', iv: '4h', approval: { at: Date.now() - 864e5, n: 40, avgR: .2, pf: 1.3, tR: 2.4 } });
+const good = () => ({ strategy: 'trail', iv: '4h', approval: { at: Date.now() - 864e5, n: 40, avgR: .2, pf: 1.3, tR: 3.0 } });
 {
   const { env: e, f } = env(), pushes = []; globalThis.fetch = (u, o) => String(u).startsWith('https://ntfy.sh') ? (pushes.push(JSON.parse(o.body)), Promise.resolve({ ok: true })) : f(u, o);
   let j = await (await call(e, '/hl/sync', { method: 'POST', body: { desired: want, ...good() } })).json(); assert.equal(j.plan.filter(p => p.op === 'open').length, 1, 'com aprovação abre');
@@ -94,7 +94,7 @@ const good = () => ({ strategy: 'trail', iv: '4h', approval: { at: Date.now() - 
   j = await (await call(real, '/hl/sync', { method: 'POST', body: { desired: want } })).json(); assert.equal(j.plan.filter(p => p.op === 'open').length, 0); assert.match(JSON.stringify(j.skipped), /aprova/i);
   const tn = { ...e, HL_REQUIRE_APPROVAL: '0' };   // na rede de teste pode desligar-se (para experimentar a ligação)
   j = await (await call(tn, '/hl/sync', { method: 'POST', body: { desired: want } })).json(); assert.equal(j.plan.filter(p => p.op === 'open').length, 1);
-  assert.equal((await call(e, '/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 12, avgR: .3, pf: 1.5, tR: 2.5, at: Date.now() } })).status, 400);
+  assert.equal((await call(e, '/hl/approve', { method: 'POST', body: { strategy: 'trail', iv: '4h', n: 12, avgR: .3, pf: 1.5, tR: 3.0, at: Date.now() } })).status, 400);
   ok('R6 aprovação expira aos 45 dias; HL_REQUIRE_APPROVAL=0 só vale na rede de teste');
 }
 {

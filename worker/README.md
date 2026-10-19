@@ -76,8 +76,12 @@ O worker corre sozinho **a cada 5 minutos**, mesmo com a app fechada (cron da Cl
 - `SOL_MAX_PRIORITY_LAMPORTS` (200000): teto da taxa de prioridade por transação.
 - Empacotar o worker **completo** (inclui `grokbot/strategy.js` e `grokbot/backtest.js`, de que o código e os testes dependem): `npm run pack` dentro de `worker/` (ou `node scripts/pack-worker.mjs`).
 
+### Scalping
+O Macro Desk e o teste histórico têm um modo de **scalping** (velas de 1 e 5 min), só para papel e backtest. O worker **recusa sempre** abrir posições com estratégia `scalp` ou velas de 1/5 min
+(o worker sincroniza de 30 s a 5 min; não serve para scalping). Não há variável para o permitir.
+
 ### Trava do dinheiro real
-- **Hyperliquid:** a app só envia ordens se a estratégia em uso, com o tamanho de velas em uso, tiver passado o teste em duas partes do TESTE HISTÓRICO há menos de 45 dias. Para passar, a 2.ª parte precisa de 30+ trades, ganho médio > 0, fator de lucro > 1,1 e t ≥ 2. Sem isso, o painel mostra 🔒 e nada é enviado.
+- **Hyperliquid:** a app só envia ordens se a estratégia em uso, com o tamanho de velas em uso, tiver passado o teste em duas partes do TESTE HISTÓRICO há menos de 45 dias. Para passar, a 2.ª parte precisa de 30+ trades, ganho médio > 0, fator de lucro > 1,1 e t ≥ 2,5. Sem isso, o painel mostra 🔒 e nada é enviado.
 - **Memecoins:** só há compras reais se o desk de memecoins em papel já tiver 30+ trades fechadas, resultado positivo e fator de lucro > 1,1. As vendas continuam sempre.
 - **Piloto automático:** a app envia a aprovação para `POST /hl/approve`, e o worker volta a verificar os números. Sem aprovação válida, o piloto não abre posições novas; só gere as que existem.
 
