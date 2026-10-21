@@ -1,0 +1,21 @@
+name: Sondagem de fontes de dados
+
+# Só lê páginas públicas para ver que históricos estão acessíveis a partir do GitHub Actions.
+on:
+  push:
+    branches: ['ccr-**']
+    paths: ['scripts/probe-data.mjs', '.github/workflows/probe.yml']
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/probe-data.mjs
