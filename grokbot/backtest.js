@@ -42,6 +42,8 @@ function simulate(barsByKey,cfgIn,opts={}){
   const slip=(cfg.slipBps||0)/1e4,slipStop=(cfg.slipStopBps??cfg.slipBps??0)/1e4,tpLimit=cfg.tpMode!=='market';
   const barMs=cfg.barMs||(()=>{for(const k of Object.keys(barsByKey)){const b=barsByKey[k];if(b&&b.length>2){const d=[];for(let i=1;i<Math.min(b.length,60);i++)d.push(b[i].t-b[i-1].t);d.sort((x,y)=>x-y);return d[d.length>>1]}}return 36e5})();
   const FI=fundingIndex(opts.funding);
+  const sigAt=typeof opts.signalAt==='function'?opts.signalAt:null;   // gancho do laboratório: sinal calculado sobre indicadores pré-calculados (k,i,barras) em vez de st.signal(janela)
+  const xq={};let expoBars=0,slots=0;
   // diagnóstico: para cada vela avaliada, porque entrou ou não entrou (contagens; opts.log guarda também o detalhe por vela)
   const stNF=D.make({...cfg,minATRpct:0},opts.nMarkets||3);   // mesmas regras sem o filtro de custo: mostra quantos sinais ele bloqueou
   const diag={bars:0,reasons:{},wouldBe:{long:0,short:0},accepted:{long:0,short:0},minATRpct:D.minATRpct(cfg),atr:{},log:opts.log?[]:null};
@@ -80,6 +82,8 @@ function simulate(barsByKey,cfgIn,opts={}){
       orders.filled++;const p=openPos(k,o.side,o.limit,makerFee,0,{...o,t});
       p.fresh=true;   // na vela em que enche só pode sair pelo stop (não se sabe a ordem dos movimentos)
     }
+    // 1a) saídas por sinal (só com o gancho do laboratório): fecham à abertura desta vela, a mercado
+    for(const k of Object.keys(xq)){const i=ix[k].get(t);if(i==null)continue;delete xq[k];if(pos[k])closeAt(k,barsByKey[k][i].o,t,'sinal de saída',taker,slip)}
     // 1b) ordens a mercado geradas ao fecho da vela anterior: enchem à abertura desta vela, com taxa e slippage
     for(const k of Object.keys(qe)){
       const i=ix[k].get(t);if(i==null)continue;
@@ -102,6 +106,7 @@ function simulate(barsByKey,cfgIn,opts={}){
       else if(p.held>=cfg.maxHoldBars)closeAt(k,b.c,t,'time-stop');
       if(pos[k])pos[k].stop=st.trailStop(pos[k],b);   // stop móvel: só vale a partir da vela seguinte
     }
+    slots+=keys.length;for(const k of keys)if(pos[k])expoBars++;
     // 2b) day trade: à última vela do dia UTC fecha tudo a mercado (nunca dorme com posição)
     if(st.isEOD(t+barMs)){for(const k of Object.keys(pos)){const i=ix[k].get(t);if(i!=null)closeAt(k,barsByKey[k][i].c,t,'fim do dia')}for(const k of Object.keys(pend))delete pend[k];for(const k of Object.keys(qe))delete qe[k]}
     // 3) proteção de capital (como no desk: -20% desde o máximo fecha tudo; -5% num dia pausa até amanhã)
@@ -115,16 +120,17 @@ function simulate(barsByKey,cfgIn,opts={}){
     // 4) entradas
     for(const k of keys){
       const i=ix[k].get(t);if(i==null)continue;
+      if(sigAt&&pos[k]&&!xq[k]){const s2=sigAt(k,i,barsByKey[k]);if(s2&&s2.exit===pos[k].side)xq[k]=true}
       const note=(dir,w,extra)=>{if(diag.log&&diag.log.length<50000)diag.log.push({t,k,dir,why:w,...extra})};
       if(halted){why1('proteção de capital ativa (sem novas entradas)');note('flat','proteção de capital ativa');continue}
       if(pos[k]||pend[k]||qe[k]){why1('posição ou ordem já aberta neste mercado');continue}
       if(st.noEntry(t+barMs)){why1('janela sem entradas (day trade: últimas horas do dia)');note('flat','janela sem entradas');continue}
-      const b=barsByKey[k][i],sig=st.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));
+      const b=barsByKey[k][i],sig=sigAt?sigAt(k,i,barsByKey[k]):st.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));
       diag.bars++;
       const ap=sig.atr>0?sig.atr/b.c:null;if(ap!=null)(diag.atr[k]??=[]).push(ap);
       if(sig.dir!=='long'&&sig.dir!=='short'){
         const cat=category(sig.why||'');why1(cat);
-        if(/^filtro de custo|muito baixa/.test(cat)){const nf=stNF.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));if(nf.dir==='long'||nf.dir==='short')diag.wouldBe[nf.dir]++}
+        if(!sigAt&&/^filtro de custo|muito baixa/.test(cat)){const nf=stNF.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));if(nf.dir==='long'||nf.dir==='short')diag.wouldBe[nf.dir]++}
         note(sig.dir,sig.why,{atrPct:ap});continue;
       }
       diag.accepted[sig.dir]++;orders.signals++;note(sig.dir,sig.why,{atrPct:ap,action:'sinal aceite'});
@@ -140,7 +146,7 @@ function simulate(barsByKey,cfgIn,opts={}){
   const pc=(a,q)=>a[Math.min(a.length-1,Math.floor(q*a.length))];
   const atrSum={};for(const k of Object.keys(diag.atr)){const a=diag.atr[k].slice().sort((x,y)=>x-y);atrSum[k]={n:a.length,p10:pc(a,.1),p50:pc(a,.5),p90:pc(a,.9),max:a[a.length-1],aboveMin:a.filter(x=>x>=diag.minATRpct).length/a.length}}
   diag.atr=atrSum;
-  return{cfg,trades,curve,halts,maxDD,openAtEnd:open,finalCash:cash,firstHalt,bh,start:t0||0,end:tEnd,bars,orders,diag};
+  return{cfg,trades,curve,halts,maxDD,openAtEnd:open,finalCash:cash,firstHalt,bh,start:t0||0,end:tEnd,bars,orders,diag,exposure:slots?expoBars/slots:0};
 }
 
 const sum=a=>a.reduce((s,x)=>s+x.pnl,0);
@@ -293,6 +299,23 @@ function protocol(barsByKey,cfg,hyps,opts={}){
   return{split:[t1,t2],rows,variantsTested:k,tCrit:{single:1.96,adjusted:zAdj}};
 }
 
-const api={simulate,summarize,runAll,research,prepCfg,analyze,crossCheck,blockBootstrap,protocol,qnorm};
+
+/* métricas de risco/retorno a partir da curva da conta (valores diários, UTC): Sharpe e Sortino anualizados (365 dias), CAGR, Calmar,
+   fator de recuperação, pior período debaixo de água e exposição ao mercado (fração de velas×mercados com posição aberta) */
+function perf(res){
+  const start=res.cfg.start,cv=res.curve||[];
+  const empty={sharpe:null,sortino:null,cagr:null,calmar:null,recovery:null,underwaterDays:0,exposure:res.exposure??null,returnPct:res.finalCash!=null?res.finalCash/start-1:null,days:0};
+  if(cv.length<3)return empty;
+  const days=new Map();for(const [t,e] of cv)days.set(Math.floor(t/864e5),e);
+  const ds=[...days.keys()].sort((a,b)=>a-b),eq=ds.map(d=>days.get(d));
+  const rets=[];let prev=start;for(const e of eq){rets.push(e/prev-1);prev=e}
+  const m=rets.reduce((x,y)=>x+y,0)/rets.length,sdv=Math.sqrt(rets.reduce((x,y)=>x+(y-m)**2,0)/(rets.length-1||1));
+  const dn=Math.sqrt(rets.reduce((x,y)=>x+Math.min(y,0)**2,0)/rets.length);
+  const years=Math.max(1,(ds[ds.length-1]-ds[0]+1))/365,fin=eq[eq.length-1],cagr=fin>0?(fin/start)**(1/years)-1:-1;
+  let peak=start,ddUsd=0,uw=0,maxUw=0;for(const e of eq){if(e>=peak){peak=e;uw=0}else{uw++;maxUw=Math.max(maxUw,uw)}ddUsd=Math.max(ddUsd,peak-e)}
+  return{sharpe:sdv>0?m/sdv*Math.sqrt(365):null,sortino:dn>0?m/dn*Math.sqrt(365):null,cagr,calmar:res.maxDD>0?cagr/res.maxDD:null,
+    recovery:ddUsd>0?(fin-start)/ddUsd:null,underwaterDays:maxUw,exposure:res.exposure??null,returnPct:fin/start-1,days:ds.length};
+}
+const api={simulate,summarize,runAll,research,prepCfg,analyze,crossCheck,blockBootstrap,protocol,qnorm,perf};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.BT=api;
 })(typeof window!=='undefined'?window:globalThis);
