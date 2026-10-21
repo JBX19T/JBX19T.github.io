@@ -37,11 +37,12 @@ export function trades(R, pred, { k, C, raw = R.raw, fund = R.fund, gLo, gHi }) 
   return out;
 }
 /* estatística de um conjunto de trades; month(g) → rótulo de cluster */
-export function summarize(tr, monthOf, { B = 2000 } = {}) {
+export function summarize(tr, monthOf, { B = 2000, vs = false, C = 0 } = {}) {
   const n = tr.length; if (!n) return { n: 0 };
   const net = tr.map(t => t.net), cb = ST.clusterBootstrap(net, tr.map(t => monthOf(t.g)), { B }), gross = tr.reduce((s, t) => s + t.gross, 0) / n;
   const w = net.filter(x => x > 0).reduce((s, x) => s + x, 0), l = -net.filter(x => x < 0).reduce((s, x) => s + x, 0), sub = s => { const a = tr.filter(t => t.side === s); return a.length ? a.reduce((x, t) => x + t.net, 0) / a.length : null; };
-  return { n, net: cb.mean, gross, lo: cb.lo, hi: cb.hi, t: cb.t, pOne: cb.pOne, clusters: cb.clusters, hit: net.filter(x => x > 0).length / n, pf: l > 0 ? w / l : null, long: sub(1), short: sub(-1), nLong: tr.filter(t => t.side === 1).length };
+  let vsL = null; if (vs) { const d = tr.map(t => t.side === 1 ? 0 : 2 * t.net + 2 * C), cv = ST.clusterBootstrap(d, tr.map(t => monthOf(t.g)), { B: Math.min(B, 1500) }); vsL = { mean: cv.mean, pOne: cv.pOne }; }   // ganho face a «sempre comprado» nas mesmas entradas
+  return { vs: vsL, n, net: cb.mean, gross, lo: cb.lo, hi: cb.hi, t: cb.t, pOne: cb.pOne, clusters: cb.clusters, hit: net.filter(x => x > 0).length / n, pf: l > 0 ? w / l : null, long: sub(1), short: sub(-1), nLong: tr.filter(t => t.side === 1).length };
 }
 /* carteira: cada trade pesa 1/NU do capital; PnL diário com saída à data de saída */
 export function portfolio(tr, R, NU, costExtra = 0) {

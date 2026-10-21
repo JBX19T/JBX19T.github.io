@@ -75,11 +75,11 @@ const yearOf = (R, g) => new Date(R.t0 + (g + 1) * R.stepMs).getUTCFullYear();
   // ---------- Etapa 2: 16 configurações em DEV+VAL ----------
   out(`## Etapa 2 — configurações em DEV e VAL (custo 12 bps${FUNDING ? ' + funding' : ''})`); out('');
   const cfgs = []; for (const m of M) for (const k of KS) { const { R } = m, tdv = trades(R, m.wf.pred, { k, C, gLo: m.gEval, gHi: m.g75 }), mo = monthOf(R);
-    const dev = summarize(tdv.filter(t => t.g < m.g50), mo), val = summarize(tdv.filter(t => t.g >= m.g50), mo), dv = summarize(tdv, mo, { B: 3000 }); cfgs.push({ m, k, id: `${m.id}, k=${k}`, dev, val, dv }); }
+    const dev = summarize(tdv.filter(t => t.g < m.g50), mo), val = summarize(tdv.filter(t => t.g >= m.g50), mo), dv = summarize(tdv, mo, { B: 3000, vs: true, C }); cfgs.push({ m, k, id: `${m.id}, k=${k}`, dev, val, dv }); }
   const adjAll = ST.holm([...cfgs.map(c => c.dv.pOne ?? 1), ...Array(PRIOR).fill(1)]), adj = adjAll.slice(0, cfgs.length);
-  cfgs.forEach((c, i) => { c.p = adj[i]; c.finalist = c.dv.n >= 300 && c.dev.n > 0 && c.val.n > 0 && c.dev.net > 0 && c.val.net > 0 && c.p < .05; });
+  cfgs.forEach((c, i) => { c.p = adj[i]; c.finalist = c.dv.n >= 300 && c.dev.n > 0 && c.val.n > 0 && c.dev.net > 0 && c.val.net > 0 && c.p < .05 && c.dv.vs && c.dv.vs.mean > 0 && c.dv.vs.pOne < .05; });
   const fmt = s => s.n ? `${s.n} · ${sg(s.net, 1)} · t ${f2(s.t)}` : '—';
-  out(table(['configuração', 'DEV: n · líquido bps · t', 'VAL: n · líquido bps · t', 'DEV+VAL: líquido [IC95 %]', 'bruto', 'p unilateral', `p Holm (${cfgs.length + PRIOR})`, 'finalista'], cfgs.map(c => [c.id, fmt(c.dev), fmt(c.val), c.dv.n ? `${sg(c.dv.net, 1)} [${sg(c.dv.lo, 1)}, ${sg(c.dv.hi, 1)}]` : '—', c.dv.n ? sg(c.dv.gross, 1) : '—', pv(c.dv.pOne), pv(c.p), c.finalist ? '**sim**' : 'não']))); out('');
+  out(table(['configuração', 'DEV: n · líquido bps · t', 'VAL: n · líquido bps · t', 'DEV+VAL: líquido [IC95 %]', 'bruto', 'p unilateral', `p Holm (${cfgs.length + PRIOR})`, 'ganho vs «sempre comprado» (bps · p)', 'finalista'], cfgs.map(c => [c.id, fmt(c.dev), fmt(c.val), c.dv.n ? `${sg(c.dv.net, 1)} [${sg(c.dv.lo, 1)}, ${sg(c.dv.hi, 1)}]` : '—', c.dv.n ? sg(c.dv.gross, 1) : '—', pv(c.dv.pOne), pv(c.p), c.dv.vs ? `${sg(c.dv.vs.mean, 1)} · ${pv(c.dv.vs.pOne)}` : '—', c.finalist ? '**sim**' : 'não']))); out('');
   const fin = cfgs.filter(c => c.finalist).sort((a, b) => b.dv.t - a.dv.t).slice(0, 2);
 
   // ---------- Etapa 3: TEST só para finalistas ----------
@@ -88,14 +88,14 @@ const yearOf = (R, g) => new Date(R.t0 + (g + 1) * R.stepMs).getUTCFullYear();
   if (!fin.length) out(`**Nenhuma configuração é finalista: o TEST não foi aberto.** Resultado do ${FUNDING ? 'Ciclo 2' : 'Ciclo 1'}: **negativo** (ver as razões na Etapa 2).`);
   else {
     const rowsT = [], pT = [];
-    const T = fin.map(c => { const { m } = c, R = m.R, tt = trades(R, m.wf.pred, { k: c.k, C, gLo: m.g75, gHi: m.N }), s = summarize(tt, monthOf(R), { B: 5000 }), all = trades(R, m.wf.pred, { k: c.k, C, gLo: m.gEval, gHi: m.N });
+    const T = fin.map(c => { const { m } = c, R = m.R, tt = trades(R, m.wf.pred, { k: c.k, C, gLo: m.g75, gHi: m.N }), s = summarize(tt, monthOf(R), { B: 5000, vs: true, C }), all = trades(R, m.wf.pred, { k: c.k, C, gLo: m.gEval, gHi: m.N });
       const ctlT = summarize(trades(R, m.wfc.pred, { k: c.k, C, raw: m.ct.raw, fund: m.ct.fund, gLo: m.g75, gHi: m.N }), monthOf(R), { B: 3000 }), pf = portfolio(tt, R, NU), byY = {}; for (const t of all) (byY[yearOf(R, t.g)] ??= []).push(t.net);
       const years = Object.entries(byY).filter(([, a]) => a.length >= 30), yearsPos = years.filter(([, a]) => a.reduce((x, y) => x + y, 0) / a.length > 0).length; return { c, s, ctlT, pf, years, yearsPos, stress: s.n ? s.net - (CSTRESS - C) : null }; });
     const hp = ST.holm(T.map(x => x.s.pOne ?? 1));
-    T.forEach((x, i) => { const s = x.s; x.pass = { a: s.n > 0 && s.net > 0 && hp[i] < .05, b: x.stress > 0, c: x.years.length > 0 && x.yearsPos / x.years.length >= 2 / 3, d: x.pf.maxDD <= .25, e: (s.long == null || s.long >= 0) && (s.short == null || s.short >= 0), f: !(x.ctlT.n > 0 && x.ctlT.pOne < .05 && x.ctlT.net > 0) }; x.ok = Object.values(x.pass).every(Boolean);
-      rowsT.push([x.c.id, s.n, `${sg(s.net, 1)} [${sg(s.lo, 1)}, ${sg(s.hi, 1)}]`, sg(s.gross, 1), f2(s.t), pv(hp[i]), pc(s.hit, 0), f2(s.pf), `${sg(s.long, 1)} / ${sg(s.short, 1)}`, sg(x.stress, 1), `${x.yearsPos}/${x.years.length}`, `${pc(x.pf.ret)} · queda ${pc(x.pf.maxDD)} · Sharpe ${f2(x.pf.sharpe)}`, `${Object.entries(x.pass).map(([k, v]) => k + (v ? '✓' : '✗')).join(' ')}`, x.ok ? '**candidata**' : 'não passa']); });
-    out(table(['configuração', 'trades TEST', 'líquido bps [IC95 %]', 'bruto', 't', 'p Holm (≤2)', 'acerto', 'fator de lucro', 'compras / vendas (bps)', 'stress 24 bps', 'anos >0', 'carteira (TEST)', 'critérios a–f', 'resultado'], rowsT)); out('');
-    out('Critérios: a) líquido>0 com p corrigido<0,05; b) líquido>0 a 24 bps; c) ≥2/3 dos anos>0; d) queda máx. ≤25 %; e) compras e vendas ≥0; f) o controlo negativo não passa em (a).'); out('');
+    T.forEach((x, i) => { const s = x.s; x.pass = { a: s.n > 0 && s.net > 0 && hp[i] < .05, b: x.stress > 0, c: x.years.length > 0 && x.yearsPos / x.years.length >= 2 / 3, d: x.pf.maxDD <= .25, e: (s.long == null || s.long >= 0) && (s.short == null || s.short >= 0), f: !(x.ctlT.n > 0 && x.ctlT.pOne < .05 && x.ctlT.net > 0), g: !!(s.vs && s.vs.mean > 0 && s.vs.pOne < .05) }; x.ok = Object.values(x.pass).every(Boolean);
+      rowsT.push([x.c.id, s.n, `${sg(s.net, 1)} [${sg(s.lo, 1)}, ${sg(s.hi, 1)}]`, sg(s.gross, 1), f2(s.t), pv(hp[i]), pc(s.hit, 0), f2(s.pf), `${sg(s.long, 1)} / ${sg(s.short, 1)}`, s.vs ? `${sg(s.vs.mean, 1)} · ${pv(s.vs.pOne)}` : '—', sg(x.stress, 1), `${x.yearsPos}/${x.years.length}`, `${pc(x.pf.ret)} · queda ${pc(x.pf.maxDD)} · Sharpe ${f2(x.pf.sharpe)}`, `${Object.entries(x.pass).map(([k, v]) => k + (v ? '✓' : '✗')).join(' ')}`, x.ok ? '**candidata**' : 'não passa']); });
+    out(table(['configuração', 'trades TEST', 'líquido bps [IC95 %]', 'bruto', 't', 'p Holm (≤2)', 'acerto', 'fator de lucro', 'compras / vendas (bps)', 'ganho vs «sempre comprado» (bps · p)', 'stress 24 bps', 'anos >0', 'carteira (TEST)', 'critérios a–g', 'resultado'], rowsT)); out('');
+    out('Critérios: a) líquido>0 com p corrigido<0,05; b) líquido>0 a 24 bps; c) ≥2/3 dos anos>0; d) queda máx. ≤25 %; e) compras e vendas ≥0; f) o controlo negativo não passa em (a); g) ganho face a «sempre comprado» nas mesmas entradas > 0 com p < 0,05 (o sinal de direção acrescenta valor além da deriva).'); out('');
     verdict = T.some(x => x.ok) ? 'candidata' : 'sem candidata';
     out(`**Resultado do ${FUNDING ? 'Ciclo 2' : 'Ciclo 1'}: ${verdict === 'candidata' ? 'há candidata (validada apenas em histórico/proxy; faltam paper, funding, taxa real e capital mínimo)' : 'nenhuma candidata'}.**`);
   }

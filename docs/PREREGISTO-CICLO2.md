@@ -24,3 +24,16 @@ O TEST (últimos 25 % do tempo) coincide com o da 2.ª corrida do Ciclo 1. Os fi
 
 ## 6. Resultado negativo
 Se nenhuma configuração for finalista ou nenhuma passar o TEST, o Ciclo 2 é negativo e relata-se assim.
+
+---
+
+## Adenda 1 — escrita DEPOIS de ver a 2.ª corrida do Ciclo 1 e ANTES de ver qualquer resultado do Ciclo 2
+
+**Achado no Ciclo 1 corrigido (`f2c8451`):** para 1 d, h = 5, o **controlo negativo** (alvo deslocado) deu bruto **+115 bps (t ≈ +5)** — maior do que o modelo real (+52 bps). Causa provável: o modelo aprende uma ordenada na origem positiva (os ativos do universo, todos sobreviventes, subiram em média) e passa a estar quase sempre comprado, ganhando a deriva. Ou seja, «bruto positivo» pode ser **deriva do universo**, não previsão.
+
+**Alterações (só tornam os critérios mais exigentes), aplicam-se ao Ciclo 2 e, retroativamente, ao Ciclo 1 (cujo resultado negativo não muda):**
+1. **Critério adicional na Etapa 2:** para ser finalista, o ganho médio face a «sempre comprado nas mesmas entradas» tem de ser > 0, com p unilateral por clusters de mês < 0,05 (mede se o **sinal de direção** acrescenta valor além de escolher momentos).
+2. **Critério (g) na Etapa 3:** o mesmo teste no TEST.
+3. A tabela da Etapa 2 passa a mostrar esse ganho e o seu p para todas as configurações.
+
+O resto do pré-registo mantém-se. A corrida do Ciclo 2 que estiver a decorrer com o código anterior **não conta**; só vale a corrida com este código.
