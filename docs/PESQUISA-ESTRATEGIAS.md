@@ -6,11 +6,11 @@ Data: 2026-10-21. Este registo diz exatamente o que foi e o que não foi consult
 
 | Item | Número |
 |---|---|
-| Pesquisas web feitas (ferramenta de pesquisa, só resumos) | 13 |
-| Páginas abertas e lidas na íntegra | **0** (3 tentativas de abrir páginas falharam: o domínio não resolve a partir do ambiente) |
-| Fontes distintas em que me apoiei (ver §2) | 28 |
-| Das quais artigos, teses, revisões académicas ou documentação oficial | 16 |
-| Das quais blogues, sites de backtests, fóruns e sínteses de fornecedores (evidência fraca, sem auditoria) | 12 |
+| Pesquisas web feitas (ferramenta de pesquisa, só resumos) | 21 (13 na 1.ª ronda, 8 na fase 2) |
+| Páginas abertas e lidas na íntegra | **0** (3 tentativas de abrir páginas falharam: o domínio não resolve a partir do ambiente; na fase 2 não repeti, e usei só resumos de pesquisa) |
+| Fontes distintas em que me apoiei (ver §2 e §2b) | 39 |
+| Das quais artigos, teses, revisões académicas ou documentação oficial | 25 |
+| Das quais blogues, sites de backtests, fóruns e sínteses de fornecedores (evidência fraca, sem auditoria) | 14 |
 | Estratégias/famílias com regras formais implementadas na biblioteca | 29 (`grokbot/lab.js`) |
 | Configurações distintas simuladas por tamanho de vela | 1h: 540 · 4h: 595 · 1d: 520 (total 1 655) |
 
@@ -69,6 +69,27 @@ Limitação importante: como as pesquisas devolvem resumos e não o texto integr
 | H1b | FalconX, *Transformational Potential of HIP-3* | https://www.falconx.io/newsroom/the-transformational-potential-of-hyperliquids-hip-3 | contexto; volume do mercado XYZ100 |
 
 **Consequência para o modelo de custos:** se a taxa normal de um perpétuo é cerca de 4,5 bps (valor de uma fonte secundária), o dobro dá os 9 bps que o bot assume. É coerente, mas a taxa exata dos mercados `xyz:` **continua por confirmar** (a pesquisa não a devolveu). A auditoria mostra que as conclusões não dependem desta taxa: sem custos o resultado também não é positivo (ver `docs/AUDITORIA-DADOS-REAIS.md`).
+
+## 2b. Fontes acrescentadas na fase 2 (resumos de pesquisa)
+
+| ID | Fonte | Link | O que retirei | Fiabilidade |
+|---|---|---|---|---|
+| S11 | Zarattini, Aziz, Barbon (2024-25), *Beat the Market: An Effective Intraday Momentum Strategy for S&P500 ETF (SPY)*, SFI Research Paper 24-97 | https://www.sfi.ch/de/publications/n-24-97-beat-the-market-an-effective-intraday-momentum-strategy-for-s-p500-etf-spy | regra de momentum intradiário no SPY com stops móveis; reporta 19,6 % anual e Sharpe 1,33 líquidos de custos (2007-2024) | working paper; números dos autores, não replicados aqui |
+| S12 | Zarattini, Pagani, Wilcox (2025), *Does Trend-Following Still Work on Stocks?* | https://concretumgroup.com/does-trend-following-still-work-on-stocks/ | revê a tendência em ações dos EUA 1950-2024 | praticantes (Concretum); só resumo |
+| S13 | Faber (2007), *A Quantitative Approach to Tactical Asset Allocation* (resumos) | https://www.fedsmith.com/2010/07/28/asset-allocation-your-tsp/ | regra: dentro/fora de cada classe de ativos conforme o preço está acima/abaixo da média simples de 10 meses | resumo secundário |
+| S14 | Sullivan, Timmermann, White (1999), *Data-snooping, technical trading rule performance, and the bootstrap*, J. Finance | https://researchonline.lse.ac.uk/id/eprint/119144 | aplica o Reality Check de White a um universo grande de regras técnicas | artigo; as leituras dos resultados são **contraditórias** entre resumos (ver abaixo) |
+| S14b | Bajgrowicz, Scaillet, EFMA 2008 | https://www.efmaefm.org/0EFMAMEETINGS/EFMA%20ANNUAL%20MEETINGS/2008-Athens/papers/Bajgrowicz.pdf | revisão posterior | artigo (resumo) |
+| S15 | White (2000), *A Reality Check for Data Snooping*, Econometrica | https://www.econometricsociety.org/publications/econometrica/2000/09/01/reality-check-data-snooping | teste de que o melhor modelo de uma busca não bate a referência; bootstrap estacionário | artigo (resumo) |
+| S15b | Documentação do pacote `arch`: teste SPA de Hansen | https://arch.readthedocs.io/en/latest/multiple-comparison/generated/arch.bootstrap.SPA.html | SPA padroniza por desvio-padrão e usa blocos geométricos (bootstrap estacionário) | documentação de software |
+| S16 | Lempérière, Deremble, Seager, Potters, Bouchaud, *Two centuries of trend following* | https://ar5iv.arxiv.org/html/1404.3274 | Sharpe ≈ 0,7 num conjunto diversificado desde 1800, t ≈ 5 desde 1960; números **brutos de custos** | working paper (resumo) |
+| S16b | Lempérière et al., *Trends and Risk Premia: Update* | https://arxiv.org/pdf/1708.07637 | tendências longas sem degradação estatística, tendências curtas «enfraqueceram» | working paper (resumo) |
+| S17 | Brock, Lakonishok, LeBaron (1992), J. Finance | https://ideas.repec.org/a/bla/jfinan/v47y1992i5p1731-64.html | médias móveis e rompimentos no Dow Jones 1897-1986 favoráveis; retestes posteriores mistos | artigo (resumo) |
+| S18 | Baltas e Kosowski, *Demystifying Time-Series Momentum Strategies* | https://papers.ssrn.com/abstract=2140091 | modelo de custos para futuros; menos rotação sem perda significativa | working paper (resumo) |
+
+**O que a fase 2 aprendeu com estas fontes:**
+- A literatura boa sobre tendência (S1, S2, S16) é de **portefólios diversificados de futuros em dezenas de mercados e décadas**, **sem custos** nos números principais (S16) ou com custos pequenos de futuros (S18). A hipótese H1-H4 testa uma versão de **um mercado de cada vez, a 9 bps por ordem**, que é bem mais exigente.
+- S14 é um aviso concreto sobre leituras contraditórias: um resumo diz que as regras sobreviveram ao *data snooping*, outro diz que nenhuma foi significativa. Sem ler o artigo, não decido entre as duas leituras.
+- S11 é o único resultado «intradiário» recente com custos incluídos, mas é do próprio autor, em ETF de ações dos EUA e com stops móveis; não foi replicado aqui (o bot não tem SPY).
 
 ## 3. O que as fontes dizem, em conjunto
 1. A evidência mais forte (S1, S2) é de **tendência lenta, diversificada por muitos mercados**, com meses de horizonte. Não é rompimento de 15 minutos.
