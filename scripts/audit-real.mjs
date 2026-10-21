@@ -95,7 +95,8 @@ function statsBlock(name, res, A, sm, extra = {}) {
   out(`| ganho médio / perda média / relação | ${usd(A.avgWin)} / ${usd(A.avgLoss)} / ${f2(A.payoff)} |`);
   out(`| expectativa por trade | ${usd(A.expUsd)} · ${sg(A.expR)} R (R ponderado pelo risco ${sg(sm.avgRw)}) |`);
   out(`| incerteza da expectativa em R | desvio ${f2(A.sdR)} · IC95% por blocos [${sg(A.ci.lo)}, ${sg(A.ci.hi)}] · P(média>0) ${A.ci.pPos == null ? '—' : pc(A.ci.pPos, 0)} · t ${f2(A.tR)} (n=${A.n}) |`);
-  out(`| antes de custos / custos | ${sg(sm.avgGrossR)} R / ${f2(sm.costR)} R por trade · taxas ${usd(A.costs.fees)} · slippage ${usd(A.costs.slip)} · funding ${usd(A.costs.funding)} |`);
+  out(`| antes de custos / custos | ${sg(sm.avgGrossR)} R / ${f2(sm.costR)} R por trade · taxas ${usd(A.costs.fees)} · slippage ${usd(A.costs.slip)} · funding (custo; negativo = recebido) ${usd(A.costs.funding)} |`);
+  { const rk = res.trades.filter(t => t.risk > 0).map(t => t.risk).sort((x, y) => x - y); if (rk.length) { const rs = res.trades.filter(t => t.risk > 0).map(t => t.pnl / t.risk); out(`| risco por trade ($ = 1 R) | mín ${usd(rk[0])} · mediana ${usd(rk[rk.length >> 1])} · máx ${usd(rk[rk.length - 1])} (varia com a conta) · Σ R ${sg(rs.reduce((x, y) => x + y, 0))} · Σ $ ${usd(A.net)} · Σ $ ÷ risco médio ${sg(A.net / (rk.reduce((x, y) => x + y, 0) / rk.length))} R |`); } }
   out(`| queda máxima | ${usd(A.maxDDusd)} (${pc(A.maxDDpct)}) · maior sequência de perdas ${A.maxLossStreak} |`);
   const bh = Object.entries(sm.bh).map(([k, v]) => `${k} ${pc(v)}`).join(' · ');
   out(`| comprar e manter | ${bh} |`);
