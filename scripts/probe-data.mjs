@@ -13,13 +13,10 @@ async function get(name, url, parse) {
 }
 const yahoo = txt => { const j = JSON.parse(txt), r = j.chart.result[0], t = r.timestamp, c = r.indicators.quote[0].close; return `${t.length} pontos, ${new Date(t[0] * 1000).toISOString().slice(0, 10)} → ${new Date(t[t.length - 1] * 1000).toISOString().slice(0, 10)}, nulos ${c.filter(x => x == null).length}`; };
 const csv = txt => { const L = txt.trim().split('\n'); return `${L.length - 1} linhas, ${L[1]?.split(',')[0]} → ${L[L.length - 1].split(',')[0]} · cabeçalho: ${L[0]}`; };
-for (const [n, s] of [['ouro GC=F', 'GC%3DF'], ['ouro XAUUSD=X', 'XAUUSD%3DX'], ['S&P 500 ^GSPC', '%5EGSPC'], ['EURUSD=X', 'EURUSD%3DX'], ['petróleo CL=F', 'CL%3DF'], ['dólar DX-Y.NYB', 'DX-Y.NYB'], ['prata SI=F', 'SI%3DF'], ['BTC-USD', 'BTC-USD'], ['Nasdaq ^IXIC', '%5EIXIC'], ['JPY=X', 'JPY%3DX']])
-  await get('yahoo ' + n, `https://query1.finance.yahoo.com/v8/finance/chart/${s}?range=max&interval=1d`, yahoo);
-for (const [n, s] of [['xauusd', 'xauusd'], ['^spx', '%5Espx'], ['eurusd', 'eurusd'], ['cl.f', 'cl.f'], ['gc.f', 'gc.f']])
-  await get('stooq ' + n, `https://stooq.com/q/d/l/?s=${s}&i=d`, csv);
-for (const id of ['DEXUSEU', 'SP500', 'GOLDAMGBD228NLBM', 'DCOILWTICO', 'DTWEXBGS'])
-  await get('fred ' + id, `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${id}`, csv);
-await get('binance PAXG 1d', 'https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=1d&startTime=0&limit=2', t => t.slice(0, 120));
-await get('binance BTC 1d', 'https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&startTime=0&limit=2', t => t.slice(0, 120));
-await get('hyperliquid meta', 'https://api.hyperliquid.xyz/info', t => t.slice(0, 60)); 
+const yahooD = txt => { const j = JSON.parse(txt), r = j.chart.result[0], t = r.timestamp, q = r.indicators.quote[0]; let bad = 0, nul = 0, dup = 0; const gaps = [];
+  for (let i = 0; i < t.length; i++) { const o = q.open[i], h = q.high[i], l = q.low[i], c = q.close[i]; if ([o, h, l, c].some(x => x == null)) { nul++; continue; } if (!(h >= Math.max(o, c) - 1e-9 && l <= Math.min(o, c) + 1e-9 && l > 0)) bad++; if (i && t[i] === t[i - 1]) dup++; if (i) gaps.push((t[i] - t[i - 1]) / 86400); }
+  gaps.sort((a, b) => a - b); return `${t.length} pontos, ${new Date(t[0] * 1000).toISOString().slice(0, 10)} → ${new Date(t[t.length - 1] * 1000).toISOString().slice(0, 10)}, nulos ${nul}, inválidos ${bad}, duplicados ${dup}, intervalo mediano ${gaps[gaps.length >> 1]} d, máx ${gaps[gaps.length - 1]} d, volume ${q.volume ? q.volume.filter(x => x > 0).length : 0}`; };
+for (const [n, s] of [['ouro GLD (ETF)', 'GLD'], ['ouro GC=F', 'GC%3DF'], ['S&P 500 ^GSPC', '%5EGSPC'], ['SPY', 'SPY'], ['EURUSD=X', 'EURUSD%3DX'], ['JPY=X', 'JPY%3DX'], ['dólar DX-Y.NYB', 'DX-Y.NYB'], ['TLT', 'TLT'], ['petróleo CL=F', 'CL%3DF'], ['prata SI=F', 'SI%3DF'], ['ETH-USD', 'ETH-USD'], ['BTC-USD', 'BTC-USD']])
+  await get('yahoo-diário ' + n, `https://query1.finance.yahoo.com/v8/finance/chart/${s}?period1=0&period2=${Math.floor(Date.now() / 1000)}&interval=1d`, yahooD);
+await get('binance BTC 1d', 'https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&startTime=0&limit=2', t => t.slice(0, 60));
 console.log(out.join('\n'));
