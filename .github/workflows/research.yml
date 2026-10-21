@@ -1,0 +1,44 @@
+name: Investigação — Ciclo 1 (estratégia original)
+
+on:
+  push:
+    branches: ['ccr-**']
+    paths: ['scripts/research/**', 'scripts/lib/data.mjs', 'grokbot/labstats.js', '.github/workflows/research.yml']
+  workflow_dispatch:
+
+jobs:
+  ciclo1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Correr o Ciclo 1 (só dados públicos de mercado, sem ordens)
+        run: node scripts/research/edgemap.mjs --out ciclo1-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ciclo1
+          path: ciclo1-out
+      - name: Guardar os resultados na branch lab-results
+        if: always()
+        run: |
+          set -e
+          D="ciclo1/$(date -u +%Y-%m-%d_%H%M)-${GITHUB_SHA::7}"
+          mkdir -p /tmp/res && cp -r ciclo1-out/. /tmp/res/
+          git config user.name "dollos-lab"; git config user.email "lab@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin lab-results >/dev/null 2>&1; then
+            git fetch origin lab-results && git checkout -B lab-results origin/lab-results
+          else
+            git checkout --orphan lab-results && git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p "$D" && cp -r /tmp/res/. "$D/"
+          git add "$D" && git commit -m "Resultados do Ciclo 1 ($GITHUB_SHA)" && git push origin lab-results
