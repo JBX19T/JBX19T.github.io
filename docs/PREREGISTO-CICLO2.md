@@ -37,3 +37,9 @@ Se nenhuma configuração for finalista ou nenhuma passar o TEST, o Ciclo 2 é n
 3. A tabela da Etapa 2 passa a mostrar esse ganho e o seu p para todas as configurações.
 
 O resto do pré-registo mantém-se. A corrida do Ciclo 2 que estiver a decorrer com o código anterior **não conta**; só vale a corrida com este código.
+
+---
+
+## Resultado do Ciclo 2 (corrida `738a438`, a única que conta)
+
+**Negativo, TEST não aberto.** O funding **não acrescenta previsibilidade**: correlação OOS com funding 0,0226 vs sem funding 0,0252 (1 h, h = 6); o modelo só com funding tem correlação ≈ 0 ou negativa em todos os prazos. Melhor configuração (1 h, h = 6, k = 3): líquido +12,9 bps [+0,5; +24,9] em DEV+VAL, mas p corrigido (32 hipóteses) = 0,70. O sinal de direção acrescenta +10 a +18 bps face a «sempre comprado» nas entradas de 1 h (p 0,003–0,04), ou seja há alguma informação direcional nas caudas, **mas não paga os custos** de forma estável (DEV fraco, VAL melhor, sem confirmação).
