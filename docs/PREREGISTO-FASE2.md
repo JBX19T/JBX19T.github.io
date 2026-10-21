@@ -104,3 +104,40 @@ Sem hipóteses a confirmar: análise descritiva (estratégias distintas, decompo
 **Contexto já conhecido que o resultado tem de superar:** nas séries independentes a regra atual (REF) deu R médio −0,10 (2 314 trades, t = −8,3). Uma variante com R ≈ 0 é só «menos má».
 
 **Execução:** `node scripts/lab2.mjs --parts D`. A Parte D só usa estas duas hipóteses e a REF. As Partes A, B e C não são repetidas nem alteradas.
+
+---
+
+## Adenda 2 — escrita DEPOIS de ver as Partes A-D e a sondagem de taxas, e antes de correr o que se segue
+
+**O que se verificou na API pública da Hyperliquid** (workflow «Sondagem de fontes de dados», execução 39595989981, 2026-10-21 11:58 UTC):
+- Tabela de taxas por omissão: **taker 0,045 % (4,5 bps), maker 0,015 % (1,5 bps)** (`userFees.feeSchedule.cross` / `add`), confirmadas.
+- Mercados do dex `xyz`: `deployerFeeScale = 1.0` em GOLD, EUR e SP500. **`xyz:EUR` e `xyz:SP500` têm `growthMode: "enabled"`; `xyz:GOLD` não tem.**
+- Fontes secundárias (resumos de pesquisa, não confirmados por mim) dizem que nos mercados de terceiros as taxas são o **dobro** das normais (9 bps taker, o valor que o bot assume) e que o modo de crescimento **reduz** as taxas de forma forte (cerca de 90 %, ou seja ≈ 0,9 bps taker). **A redução exata continua por confirmar**; só os fills reais (`/hl/fills` do worker) a confirmam.
+
+**Consequência:** para o ouro, 9 bps é uma suposição coerente com as fontes. Para EUR/USD e S&P 500, 9 bps pode ser **dez vezes** o custo real. Os resultados anteriores (custos 9 bps) não excluem que as mesmas regras sejam viáveis nesses dois mercados.
+
+**Hipóteses H7-H10 (exploratórias, condicionais ao custo):** as quatro regras H1-H4, sem alterar nenhum parâmetro, em **S&P 500 (^GSPC, 1970 → hoje)** e **EUR/USD (EURUSD=X, 2003-12 → 2019-12-31)**, a custos de «modo de crescimento».
+
+| Id | Regra | Corresponde a |
+|---|---|---|
+| H7 | `brk_ema[brk=20]/S` (Swing de produção) | H1 |
+| H8 | `don[N=55,tr=1]/C` | H2 |
+| H9 | `tsmom[Ldays=120]/C` | H3 |
+| H10 | `long200[N=200]/E` | H4 |
+
+**Cenários de custo (taxa taker por ordem a mercado; slippage como antes):**
+
+| Cenário | taker | slippage entradas / stops | uso |
+|---|---|---|---|
+| «crescimento» (principal) | 0,9 bps | 3 bps / 5 bps | decisão |
+| «×2» | 1,8 bps | 6 bps / 10 bps | condição 3 |
+| «slippage curto» | 0,9 bps | 1 bps / 2 bps | só informação |
+| «sem redução» | 9 bps | 3 bps / 5 bps | só informação (é o resultado da Parte C restrito a estas 2 séries) |
+
+Para manter os **mesmos sinais** em todos os cenários, o filtro de custo (`minATRpct`) fixa-se no valor do cenário principal.
+
+**Regra de decisão:** as mesmas 6 condições da §1, com Holm sobre as **4** hipóteses H7-H10 (α global 5 %, unilateral), e com «custos ×2» = cenário «×2». **O resultado só vale se a taxa real dos mercados `xyz:EUR` e `xyz:SP500` for confirmada por fills reais; até lá, «aprovada para paper» significa apenas «justifica confirmar a taxa e fazer paper trading».** Não se usa o ouro (sem modo de crescimento) nem outras séries.
+
+**Limitações:** slippage e profundidade reais dos mercados `xyz:` não medidos; o índice S&P 500 e o EUR/USD do Yahoo não são o preço do perpétuo `xyz`; só 2 séries (a incerteza entre mercados fica subestimada); o S&P 500 tem deriva positiva que favorece as compras (as estatísticas separam compras e vendas).
+
+**Execução:** `node scripts/lab2.mjs --parts E`.
