@@ -273,3 +273,7 @@ Qualidade verificada por mercado: velas fora de ordem 0, duplicadas 0, inválida
 ## 14. Laboratório de estratégias (2026-10-21)
 Pesquisa de fontes (`docs/PESQUISA-ESTRATEGIAS.md`), biblioteca de 29 famílias e laboratório em lote com testes múltiplos e controlo negativo (`docs/LABORATORIO.md`, `docs/LABORATORIO-RESULTADOS.md`). Resultado: 1 655 configurações, 3 905 simulações, **nenhuma aprovada**; os dados reais não se distinguem do controlo; o teste final não foi usado.
 
+
+## 15. Laboratório — Fase 2 (2026-10-21)
+
+Auditoria das 1 655 experiências, diagnóstico do rompimento e 10 hipóteses pré-registadas em dados independentes. **Nenhuma estratégia aprovada**; o rompimento atual é significativamente negativo fora do universo de desenvolvimento (R −0,10, t −8,3, 2 314 trades). Relatório: `docs/LABORATORIO-FASE2.md`; tabelas: `docs/LABORATORIO-FASE2-RESULTADOS.md`; pré-registo: `docs/PREREGISTO-FASE2.md`. Nada em produção foi alterado.
