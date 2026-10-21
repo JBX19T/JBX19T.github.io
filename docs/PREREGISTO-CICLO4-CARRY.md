@@ -35,3 +35,20 @@ Passar = «**candidata a paper/demo**». Não é garantia de lucro futuro.
 - Riscos fora do modelo: falência/ataque à bolsa, risco das pontes dos ativos UBTC/UETH/USOL, falhas de execução, mudanças de regras de funding, períodos longos de funding negativo.
 - O retorno esperado é **modesto** (um prémio de juro, não «lucros elevados»).
 - **Com 10 USD não é executável:** cada perna exige ordem ≥ 10 USD na Hyperliquid; um único mercado precisa de ≥ ~30–40 USD (spot + margem).
+
+---
+
+## Resultado (corrida `3e92586`, 2026-10-21) — **não aprovada**
+
+| | retorno anual (sobre o capital) | nota |
+|---|---|---|
+| E1 completo (2020 → 2026-10) | +5,8 % | queda máx. 0,9 % |
+| E1 DEV / VAL | +8,5 % / +5,8 % | |
+| **E1 TEST (2025-02 → 2026-10)** | **+0,3 %** (p = 0,23) | custos ×2: **−1,4 %** |
+| E2 funding Hyperliquid (2023-05 → 2026-10) | +7,6 % (p < 0,001) | 2025: +3,8 %; 2026: 0,0 % |
+
+Por ano (E1): 2020 +9,0 %, 2021 +21,4 %, 2022 −0,7 %, 2023 +3,5 %, 2024 +8,0 %, 2025 +0,6 %, 2026 +0,1 %.
+
+Falhou os critérios **a** (TEST sem significância), **b** (custos ×2 negativos) e **f** (13 liquidações com a regra de margem diária, sobretudo SOL). Passou c, d, e, g.
+
+**Leitura:** o prémio de funding existiu e foi grande em 2020–2021 e 2024, mas **comprimiu-se para perto de zero desde 2025** (mais capital a fazer a mesma operação). Com os custos da Hyperliquid, hoje praticamente não paga. Não se ajustam regras depois de ver este resultado.

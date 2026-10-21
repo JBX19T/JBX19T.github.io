@@ -46,3 +46,7 @@ Universo de sobreviventes; preços spot Binance como proxy de perpétuos Hyperli
 | Mais variações de parâmetros ou de modelo | Quase nenhum: aumenta falsos positivos sem aumentar o poder | — |
 
 Nenhuma destas opções promete lucro; a segunda e a quarta são as que podem trazer informação que o histórico público não tem.
+
+## Adenda — Ciclo 4: colheita de funding (2026-10-21)
+
+Spot comprado + perpétuo vendido (não prevê preço; recebe funding). Pré-registo e resultado: `docs/PREREGISTO-CICLO4-CARRY.md`. **Não aprovada:** +5,8 %/ano em 2020–2026 e +7,6 %/ano com o funding da Hyperliquid desde 2023, mas **+0,3 %/ano no período final (2025-02 → 2026-10)**, negativo com custos ×2, e 13 liquidações com margem 2×. O prémio comprimiu-se.
