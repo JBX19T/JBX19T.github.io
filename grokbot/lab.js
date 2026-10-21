@@ -12,7 +12,7 @@ function makeCtx(bars){
   const n=bars.length,memo=new Map(),NaNs=()=>new Array(n).fill(NaN);
   const g=(key,fn)=>{let v=memo.get(key);if(v===undefined){v=fn();memo.set(key,v)}return v};
   const t=bars.map(b=>b.t),o=bars.map(b=>b.o),h=bars.map(b=>b.h),l=bars.map(b=>b.l),c=bars.map(b=>b.c),v=bars.map(b=>b.v);
-  const hasVol=bars.length>0&&bars.every(b=>b.v>0);
+  const hasVol=bars.some(b=>b.v>0);   // há volume em pelo menos algumas barras; as barras sem volume só falham os filtros que o usam
   const barMs=(()=>{const d=[];for(let i=1;i<Math.min(n,200);i++)d.push(t[i]-t[i-1]);d.sort((x,y)=>x-y);return d.length?d[d.length>>1]:H})();
   const ema=(src,len,key)=>g(key||'ema'+len+':'+(src===c?'c':'x'),()=>{const out=NaNs();let first=-1;for(let i=0;i<n;i++)if(Number.isFinite(src[i])){first=i;break}
     if(first<0||first+len>n)return out;let e=0;for(let i=first;i<first+len;i++)e+=src[i];e/=len;out[first+len-1]=e;const k=2/(len+1);
@@ -37,7 +37,7 @@ function makeCtx(bars){
   const kc=(len,mult)=>g('kc'+len+'_'+mult,()=>{const m=ema(c,len),a=atr(len),up=NaNs(),lo=NaNs();for(let i=0;i<n;i++){up[i]=m[i]+mult*a[i];lo[i]=m[i]-mult*a[i]}return{mid:m,up,lo}});
   const hour=i=>new Date(t[i]).getUTCHours();
   const dayOf=i=>Math.floor(t[i]/DAY);
-  const vwap=g.bind(null,'vwap',()=>{const out=NaNs();if(!hasVol)return out;let pv=0,vv=0,day=-1;for(let i=0;i<n;i++){const d=dayOf(i);if(d!==day){day=d;pv=0;vv=0}const tp=(h[i]+l[i]+c[i])/3;pv+=tp*v[i];vv+=v[i];out[i]=vv>0?pv/vv:NaN}return out});
+  const vwap=g.bind(null,'vwap',()=>{const out=NaNs();if(!hasVol)return out;let pv=0,vv=0,day=-1;for(let i=0;i<n;i++){const d=dayOf(i);if(d!==day){day=d;pv=0;vv=0}const tp=(h[i]+l[i]+c[i])/3,vi=v[i]>0?v[i]:0;pv+=tp*vi;vv+=vi;out[i]=vv>0?pv/vv:NaN}return out});
   /* tendência de uma escala maior (f velas juntas), usando só barras já completas: no instante i vale a EMA até ao grupo anterior */
   const htfTrend=(f,fast,slow)=>g('htf'+f+'_'+fast+'_'+slow,()=>{const out=NaNs(),span=f*barMs,gid=i=>Math.floor(t[i]/span),closes=[],gIndex=new Map();
     for(let i=0;i<n;i++){const k=gid(i);if(!gIndex.has(k)){gIndex.set(k,closes.length);closes.push(c[i])}else closes[gIndex.get(k)]=c[i]}
@@ -152,7 +152,7 @@ const LIB=[
       if(P.vol==='hi'&&!(rk[i]>=.5))return false;
       if(P.vol==='lo'&&!(rk[i]<=.3))return false;
       if(P.vol==='exp'&&!((X.h[i]-X.l[i])>=1.5*a[i]))return false;
-      if(P.surge>0){if(!vs)return false;if(!(X.v[i]>=P.surge*vs[i-1]))return false}
+      if(P.surge>0){if(!vs||!(X.v[i]>0)||!(vs[i-1]>0))return false;if(!(X.v[i]>=P.surge*vs[i-1]))return false}
       const hr=X.hour(i);
       if(P.sess==='eu'&&!(hr>=7&&hr<15))return false;
       if(P.sess==='us'&&!(hr>=13&&hr<21))return false;

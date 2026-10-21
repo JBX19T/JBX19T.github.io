@@ -7,6 +7,10 @@ on:
     branches: ['ccr-**']
     paths: ['scripts/lab2*.mjs', 'scripts/lib/**', 'grokbot/lab.js', 'grokbot/labstats.js', 'grokbot/backtest.js', 'grokbot/strategy.js', '.github/workflows/lab2.yml']
   workflow_dispatch:
+    inputs:
+      parts:
+        description: 'Partes a correr (A, B, C, D separadas por vírgulas)'
+        default: 'A,B,C,D'
 
 jobs:
   lab2:
@@ -24,7 +28,7 @@ jobs:
         with:
           node-version: 22
       - name: Correr a fase 2
-        run: node scripts/lab2.mjs --out lab2-out
+        run: node scripts/lab2.mjs --out lab2-out --parts "${{ github.event.inputs.parts || 'D' }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

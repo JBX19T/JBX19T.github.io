@@ -10,19 +10,8 @@ export const SERIES = [
   { key: 'BTC', sym: 'BTC-USD', label: 'Bitcoin' },
   { key: 'ETH', sym: 'ETH-USD', label: 'Ethereum' },
 ];
-export async function partC(C) {
-  const { pool, DS, out, LAB, ST, BT, DSTRAT } = C;
-  const keys = SERIES.filter(s => DS['ind:' + s.key]).map(s => s.key);
-  out('# Parte C — Swing diário e outras hipóteses de tendência em dados independentes'); out('');
-  out('Hipóteses, dados e regras de decisão: `docs/PREREGISTO-FASE2.md` (enviado antes desta corrida). Cada série é simulada em separado (conta $10 000, risco 1 %, alavancagem máx. 5×).'); out('');
-  out(table(['série', 'período usado', 'barras', 'nota'], keys.map(k => { const d = DS['ind:' + k], m = d.meta; return [SERIES.find(s => s.key === k).label, `${iso(d.t0)} → ${iso(d.t1)}`, d.bars[k].length, m ? `Yahoo: ${m.raw} linhas, ${m.dropped} removidas, ${m.fixed} com high/low corrigidos` : '']; }))); out('');
-  const HYP = [
-    { id: 'H1', name: 'Swing diário de produção (compra e venda)', conf: LAB.mkConf('brk_ema', { brk: 20 }, 'S', '1d') },
-    { id: 'H2', name: 'Donchian 55 + EMA 20/50, stop móvel 3×ATR', conf: LAB.mkConf('don', { N: 55, tr: 1 }, 'C', '1d') },
-    { id: 'H3', name: 'Momentum de série temporal (120 velas)', conf: LAB.mkConf('tsmom', { Ldays: 120 }, 'C', '1d') },
-    { id: 'H4', name: 'Só comprado acima da EMA 200', conf: LAB.mkConf('long200', { N: 200 }, 'E', '1d') },
-    { id: 'REF', name: 'Referência: rompimento atual do bot (não é hipótese)', conf: LAB.mkConf('brk_ema', { brk: 20 }, 'A', '1d') },
-  ];
+async function evalFamily(C, keys, HYP) {
+  const { pool, DS, out, LAB, ST, DSTRAT } = C;
   const minATR = DSTRAT.minATRpct(LAB.BASE);
   const SC = { base: undefined, x2: { costBps: 18, slipBps: 6, slipStopBps: 10, minATRpct: minATR }, low: { costBps: 3, slipBps: 1, slipStopBps: 2, minATRpct: minATR } };
   const jobs = []; for (const h of HYP) for (const k of keys) for (const [sc, over] of Object.entries(SC)) jobs.push({ ds: 'ind:' + k, conf: h.conf, tag: `${h.id}|${k}|${sc}`, over });
@@ -58,9 +47,26 @@ export async function partC(C) {
   const rowsD = hs.map((h, i) => { const v = verdicts[h.id], c1 = v.cb.t != null && v.cb.t >= 1.645 && adj[i] < .05, c2 = v.nElig > 0 && v.posSeries / v.nElig >= 2 / 3, c3 = v.mx2 > 0, c4 = v.top3Out > 0, c5 = v.ddOk, c6 = v.halvesN === 0 ? false : v.halvesOk / v.halvesN >= 2 / 3;
     const all = c1 && c2 && c3 && c4 && c5 && c6, cls = all ? '**aprovada para paper**' : (v.mean > 0 && v.cb.hi > 0 ? 'inconclusiva' : (v.mean <= 0 || v.cb.hi < .05 ? 'rejeitada' : 'inconclusiva'));
     return [h.id, h.name, v.n, sg(v.mean), `[${sg(v.cb.lo)}, ${sg(v.cb.hi)}]`, f2(v.cb.t), pv(v.cb.pOne), pv(adj[i]), c1 ? 'sim' : 'não', `${v.posSeries}/${v.nElig} ${c2 ? 'sim' : 'não'}`, c3 ? 'sim' : 'não', c4 ? 'sim' : 'não', c5 ? 'sim' : 'não', `${v.halvesOk}/${v.halvesN} ${c6 ? 'sim' : 'não'}`, cls]; });
-  out(table(['id', 'hipótese', 'trades', 'R médio', 'IC95 %', 't', 'p', 'p Holm (4)', '1) t≥1,645 corrigido', '2) ≥2/3 séries >0', '3) custos ×2 >0', '4) sem top-3 >0', '5) queda ≤25 %', '6) duas metades >0', 'classificação'], rowsD)); out('');
+  out(table(['id', 'hipótese', 'trades', 'R médio', 'IC95 %', 't', 'p', `p Holm (${hs.length})`, '1) t≥1,645 corrigido', '2) ≥2/3 séries >0', '3) custos ×2 >0', '4) sem top-3 >0', '5) queda ≤25 %', '6) duas metades >0', 'classificação'], rowsD)); out('');
   const need = Math.ceil((1.645 * 1.3 / .15) ** 2);
   out(`Poder: para detetar +0,15 R com desvio 1,3 R a t = 1,645 são precisos cerca de **${need} trades agrupados**; cada hipótese teve ${hs.map(h => `${h.id}: ${verdicts[h.id].n}`).join(', ')}.`); out('');
+  return { verdicts, res, get, rOf, hs, adj };
+}
+
+export async function partC(C) {
+  const { pool, DS, out, LAB, ST, BT, DSTRAT } = C;
+  const keys = SERIES.filter(s => DS['ind:' + s.key]).map(s => s.key);
+  out('# Parte C — Swing diário e outras hipóteses de tendência em dados independentes'); out('');
+  out('Hipóteses, dados e regras de decisão: `docs/PREREGISTO-FASE2.md` (enviado antes desta corrida). Cada série é simulada em separado (conta $10 000, risco 1 %, alavancagem máx. 5×).'); out('');
+  out(table(['série', 'período usado', 'barras', 'nota'], keys.map(k => { const d = DS['ind:' + k], m = d.meta; return [SERIES.find(s => s.key === k).label, `${iso(d.t0)} → ${iso(d.t1)}`, d.bars[k].length, m ? `Yahoo: ${m.raw} linhas, ${m.dropped} removidas, ${m.fixed} com high/low corrigidos` : '']; }))); out('');
+  const HYP = [
+    { id: 'H1', name: 'Swing diário de produção (compra e venda)', conf: LAB.mkConf('brk_ema', { brk: 20 }, 'S', '1d') },
+    { id: 'H2', name: 'Donchian 55 + EMA 20/50, stop móvel 3×ATR', conf: LAB.mkConf('don', { N: 55, tr: 1 }, 'C', '1d') },
+    { id: 'H3', name: 'Momentum de série temporal (120 velas)', conf: LAB.mkConf('tsmom', { Ldays: 120 }, 'C', '1d') },
+    { id: 'H4', name: 'Só comprado acima da EMA 200', conf: LAB.mkConf('long200', { N: 200 }, 'E', '1d') },
+    { id: 'REF', name: 'Referência: rompimento atual do bot (não é hipótese)', conf: LAB.mkConf('brk_ema', { brk: 20 }, 'A', '1d') },
+  ];
+  const { verdicts, res, get, rOf, hs, adj } = await evalFamily(C, keys, HYP);
   // ---------- estabilidade temporal (H1) ----------
   const b1 = keys.map(k => get('H1', k, 'base')).filter(Boolean).flatMap(r => rOf(r).map(t => ({ ...t, y: new Date(t.c).getUTCFullYear() })));
   const byY = {}; for (const t of b1) (byY[t.y] ??= []).push(t.r);
@@ -82,4 +88,23 @@ export async function partC(C) {
   if (s1 && s1.ok) { const tr = rOf(s1), cb = ST.clusterBootstrap(tr.map(t => t.r), tr.map(t => month(t.c)), { B: 5000 }); out(`Período completo: ${tr.length} trades, R médio ${sg(mean(tr.map(t => t.r)))}, IC95 % por clusters [${sg(cb.lo)}, ${sg(cb.hi)}], t = ${f2(cb.t)}, queda máx. ${pc(s1.maxDD)}, resultado ${pc(s1.netPct)}.`); out('');
     const byM = {}; for (const t of tr) (byM[t.k] ??= []).push(t.r); out(table(['mercado', 'trades', 'R médio'], Object.entries(byM).map(([k, a]) => [k, a.length, sg(mean(a))]))); out(''); }
   C.C = { verdicts, res };
+}
+
+/* Parte D: hipóteses exploratórias H5 e H6 (adenda 1 do pré-registo), em dados independentes */
+export async function partD(C) {
+  const { DS, out, LAB } = C;
+  const keys = SERIES.filter(s => DS['ind:' + s.key]).map(s => s.key);
+  out('# Parte D — Filtros do rompimento validados em dados independentes (H5 e H6)'); out('');
+  out('Hipóteses exploratórias fixadas na **Adenda 1** de `docs/PREREGISTO-FASE2.md` (enviada antes desta corrida): derivam da Parte B, por isso o resultado tem de ser lido com essa ressalva. Mesmas séries, janelas, custos e regras de decisão da Parte C, com Holm sobre 2 hipóteses.'); out('');
+  const P0 = { N: 20, f: 20, s: 50, conf: 0, ext: 0, adx: 0, vol: '', surge: 0, sess: '', mom: '', retest: 0 };
+  const HYP = [
+    { id: 'H5', name: 'Rompimento atual + vela de expansão (amplitude ≥ 1,5 ATR)', conf: LAB.mkConf('brkx', { ...P0, vol: 'exp' }, 'A', '1d') },
+    { id: 'H6', name: 'Rompimento atual + volume ≥ 1,5× média de 20 (só séries com volume)', conf: LAB.mkConf('brkx', { ...P0, surge: 1.5 }, 'A', '1d') },
+    { id: 'REF', name: 'Referência: rompimento atual do bot (não é hipótese)', conf: LAB.mkConf('brk_ema', { brk: 20 }, 'A', '1d') },
+  ];
+  const { verdicts } = await evalFamily(C, keys, HYP);
+  const r = verdicts.REF, v5 = verdicts.H5, v6 = verdicts.H6;
+  out('## Comparação com a regra atual (mesmas séries)'); out('');
+  out(table(['regra', 'trades', 'R médio', 'IC95 %'], [['REF (atual)', r.n, sg(r.mean), `[${sg(r.cb.lo)}, ${sg(r.cb.hi)}]`], ['H5 (expansão)', v5.n, sg(v5.mean), `[${sg(v5.cb.lo)}, ${sg(v5.cb.hi)}]`], ['H6 (volume)', v6.n, sg(v6.mean), `[${sg(v6.cb.lo)}, ${sg(v6.cb.hi)}]`]])); out('');
+  C.D = { verdicts };
 }
