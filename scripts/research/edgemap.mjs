@@ -41,7 +41,7 @@ const yearOf = (R, g) => new Date(R.t0 + (g + 1) * R.stepMs).getUTCFullYear();
   out(`# Ciclo 1 — previsão conjunta com limiar de custo — ${new Date().toISOString()}${SYN ? ` (DADOS SINTÉTICOS ${SYN === 'null' ? 'SEM sinal' : 'COM sinal plantado'}: só teste do código)` : ''}`); out('');
   const { series, info } = await load(), names = Object.keys(series).sort((a, b) => (a === 'BTC' ? -1 : b === 'BTC' ? 1 : a.localeCompare(b)));
   if (!series.BTC) throw new Error('sem BTC');
-  const tEnd = Math.min(...names.map(n => series[n][series[n].length - 1].t)), N1 = Math.floor((tEnd - T0) / H1) + 1, grids = {};
+  const tEnd = Math.max(...names.map(n => series[n][series[n].length - 1].t)), N1 = Math.floor((tEnd - T0) / H1) + 1, grids = {};
   for (const n of names) grids[n] = toGrid(series[n], T0, N1);
   out('## Dados'); out('');
   out(table(['moeda', 'barras 1 h', 'primeira barra', 'última barra'], names.map(n => [n, series[n].length, iso(series[n][0].t), iso(series[n][series[n].length - 1].t)]))); out('');

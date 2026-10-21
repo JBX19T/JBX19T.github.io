@@ -33,3 +33,15 @@ Passar = «**candidata**» (validada só em histórico, proxy de dados). Não é
 
 ## 7. Diagnósticos exploratórios (não decidem)
 Tabela por decil de ŷ (retorno realizado bruto); importância média das características (|β| padronizado); resultado por hora do dia, por regime do BTC (acima/abaixo da média de 24 barras), por compra/venda; variante só com características locais (sem ranking transversal nem BTC).
+
+---
+
+## Adenda 1 — escrita DEPOIS de ver o resultado da 1.ª corrida (e antes de repetir)
+
+**Defeito encontrado na 1.ª corrida (`e5196d3`)**: a grelha temporal terminava na última barra da moeda com histórico mais curto (MATIC, que a Binance deixou de listar em 2024-09-10), em vez de «até hoje» como o §2 prescreve. Resultado: os dados usados acabaram em 2024-09-10 e o TEST ficou em 2023-09 → 2024-09.
+
+**Resultado dessa 1.ª corrida (fica registado e não se apaga):** 1 finalista (1 h, h = 6, k = 3: DEV+VAL +24,9 bps, p Holm < 0,001), **TEST −11,6 bps [−70,3; +53,2], falhou os critérios a, b, e** (compras −2,2 / vendas −31,8 bps). Nenhuma candidata. Etapa 1: correlação OOS ŷ–y de 0,006–0,028 (controlo ≈ −0,01 a −0,03); bruto de seguir todos os sinais +4,8 bps (1 h h = 6) contra um custo de 12 bps.
+
+**Correção:** a grelha vai até à **última barra de qualquer moeda**; moedas que acabam antes ficam com lacunas (NaN) depois dessa data (isto também reduz o viés de sobrevivência: moedas deslistadas contam até ao fim). **Nenhuma outra regra do pré-registo muda.** O código é o mesmo salvo essa linha.
+
+**Como ler a 2.ª corrida:** é uma repetição de correção de dados, não uma nova hipótese. As fronteiras DEV/VAL/TEST deslocam-se (os dados vão agora até 2026-10), por isso o TEST da 2.ª corrida cobre ≈ 2025-04 → 2026-10, em parte nunca visto; o período do antigo TEST passa a fazer parte de VAL. Reporta-se **ao lado** da 1.ª corrida, sem substituir o seu resultado.
