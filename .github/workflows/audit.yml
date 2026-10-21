@@ -1,0 +1,27 @@
+name: Auditoria em dados reais
+
+# Corre o motor de teste da app sobre velas públicas da Hyperliquid e da Binance (o sandbox de desenvolvimento não chega a estas APIs).
+# Só lê dados de mercado: não usa segredos nem envia ordens.
+on:
+  push:
+    branches: ['ccr-**']
+    paths: ['scripts/audit-real.mjs', '.github/workflows/audit.yml', 'grokbot/backtest.js', 'grokbot/strategy.js']
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/audit-real.mjs audit-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: auditoria
+          path: audit-out

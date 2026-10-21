@@ -133,8 +133,34 @@ async function run(){
   state.busy=false;state.msg='';render();
 }
 
+/* diagnóstico por vela: porque as entradas foram aceites ou recusadas (contagens do próprio motor do teste) */
+function diagStats(s){
+  const d=s.diag;if(!d)return null;
+  const reasons=Object.entries(d.reasons).sort((a,b)=>b[1]-a[1]),tot=reasons.reduce((x,[,v])=>x+v,0)+d.accepted.long+d.accepted.short;
+  const blocked=d.wouldBe.long+d.wouldBe.short,costBlocked=Object.entries(d.reasons).filter(([k])=>/^filtro de custo|muito baixa/.test(k)).reduce((x,[,v])=>x+v,0);
+  return{reasons,tot,blocked,costBlocked};
+}
+function diagHtml(s){
+  const g=diagStats(s);if(!g||!g.tot)return'';
+  const rows=g.reasons.slice(0,8).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${v}</td><td>${(v/g.tot*100).toFixed(0)}%</td></tr>`).join('');
+  const names={GOLD:'Ouro',SPX:'S&P 500',EURUSD:'EUR/USD'},d=s.diag;
+  const atr=Object.entries(d.atr).map(([k,a])=>`${names[k]||k}: mediana ${(a.p50*100).toFixed(2)}%, ${Math.round(a.aboveMin*100)}% das velas acima do mínimo`).join(' · ');
+  return`<div class="sub">PORQUE ENTROU OU NÃO ENTROU (POR VELA)</div>
+    <table><thead><tr><th>razão</th><th>velas</th><th>%</th></tr></thead><tbody>${rows}<tr><td><b>sinal aceite</b></td><td>${d.accepted.long+d.accepted.short}</td><td>${((d.accepted.long+d.accepted.short)/g.tot*100).toFixed(0)}%</td></tr></tbody></table>
+    ${row('Sinais → ordens → execuções → trades',`${s.orders?s.orders.signals:'—'} → ${s.orders?s.orders.placed:'—'} → ${s.orders?s.orders.filled:'—'} → ${s.n}`)}
+    ${row('Sinais que o filtro de custo bloqueou',g.blocked?`${g.blocked} (${d.wouldBe.long} compra · ${d.wouldBe.short} venda)`:'0')}
+    <div class="note">Volatilidade (ATR em % do preço) exigida pelo filtro: no mínimo ${(d.minATRpct*100).toFixed(2)}%. ${atr}. O filtro não é um parâmetro afinado: recusa trades em que o custo de ida e volta passaria de ${Math.round((MACRO.CFG.maxCostR||.15)*100)}% do risco.</div>`;
+}
 function verdict(s){
   const v=[];
+  if(s.n===0){
+    const g=diagStats(s);
+    v.push('<b>Nenhuma trade foi aberta: isto não é um resultado, é ausência de operações.</b>');
+    if(g&&g.reasons.length)v.push(`Razão principal: ${esc(g.reasons[0][0])} (${Math.round(g.reasons[0][1]/g.tot*100)}% das velas avaliadas).`);
+    if(g&&g.blocked)v.push(`O filtro de custo bloqueou ${g.blocked} sinais que, sem ele, teriam virado trades; a variante «sem filtro de custo» abaixo mostra o que lhes teria acontecido.`);
+    v.push('Resultado passado não garante o futuro.');
+    return v;
+  }
   if(s.n<30)v.push(`Poucas trades (${s.n}): qualquer conclusão é fraca.`);
   if(s.net<=0)v.push(`Com as regras atuais teria <b>perdido ${(Math.abs(s.netPct)*100).toFixed(1)}%</b> neste período.`);
   else v.push(`Com as regras atuais teria <b>ganho ${(s.netPct*100).toFixed(1)}%</b> neste período, já com custos.`);
@@ -205,6 +231,8 @@ function resHtml(){
     ${row('Resultado (conta de $10 000)',`<span class="${s.net>=0?'up':'dn'}">${usd(s.net)} (${pct(s.netPct)})</span>`)}
     ${row('Fator de lucro',s.pf==null?'—':s.pf===Infinity?'∞':s.pf.toFixed(2))}
     ${row('Média por trade em R',s.avgR==null?'—':`${s.avgR.toFixed(2)} R <small>(antes de custos ${s.avgGrossR.toFixed(2)} R · custos ${s.costR.toFixed(2)} R)</small>`)}
+    ${s.avgRw==null?'':row('R ponderado pelo risco',`${s.avgRw.toFixed(2)} R <small>(= resultado ÷ risco total; o R acima conta cada trade por igual, e o risco em $ cresce e encolhe com a conta, por isso podem ter sinais diferentes quando o resultado está perto de zero)</small>`)}
+    ${row('Média por trade em $',s.exp==null?'—':usd(s.exp))}
     ${row('Acerto para empatar',s.breakEvenWin==null?'— (sem alvo fixo: depende do tamanho dos ganhos)':`~${Math.round(s.breakEvenWin*100)}% (antes de custos)`)}
     ${row('Ganho / perda média',s.n?`${s.avgWin==null?'—':usd(s.avgWin)} / ${s.avgLoss==null?'—':usd(s.avgLoss)}`:'—')}
     ${row('Taxas / slippage / funding',`${usd(-s.feesUsd)} / ${usd(-(s.slipUsd||0))} / ${Object.keys(R.cover||{}).length?usd(-s.fundUsd):'não incluído'}`)}
@@ -213,6 +241,7 @@ function resHtml(){
     ${s.firstHalt?row('1.ª paragem de -20%',`${dt(s.firstHalt.t)} · conta $${s.firstHalt.equity.toFixed(0)} (${pct(s.firstHalt.equity/MACRO.CFG.start-1)})`):''}
     ${row('Comprar e manter',bh||'—')}
     <div style="margin-top:6px">${spark(s.sparkline)}</div>
+    ${diagHtml(s)}
     <div class="sub">POR MERCADO</div>${tbl(s.byMarket,'mercado')}
     <div class="sub">POR SAÍDA</div>${tbl(s.byReason,'saída')}
     <div class="sub">POR MÊS</div>${tbl(s.byMonth,'mês')}
