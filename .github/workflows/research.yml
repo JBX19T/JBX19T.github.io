@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       which:
-        description: 'ciclo1, ciclo2 ou ambos'
-        default: 'ciclo2'
+        description: 'ciclo1, ciclo2, ciclo3 ou ambos (1+2+3)'
+        default: 'ciclo3'
 
 jobs:
   ciclo1:
@@ -49,7 +49,7 @@ jobs:
           git add "$D" && git commit -m "Resultados do Ciclo 1 ($GITHUB_SHA)" && git push origin lab-results
 
   ciclo2:
-    if: github.event_name == 'push' || github.event.inputs.which == 'ciclo2' || github.event.inputs.which == 'ambos'
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.which == 'ciclo2' || github.event.inputs.which == 'ambos')
     runs-on: ubuntu-latest
     timeout-minutes: 150
     permissions:
@@ -84,3 +84,40 @@ jobs:
           fi
           mkdir -p "$D" && cp -r /tmp/res/. "$D/"
           git add "$D" && git commit -m "Resultados do Ciclo 2 ($GITHUB_SHA)" && git push origin lab-results
+
+  ciclo3:
+    if: github.event_name == 'push' || github.event.inputs.which == 'ciclo3' || github.event.inputs.which == 'ambos'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Correr o Ciclo 3 (carteira neutra; só dados públicos, sem ordens)
+        run: node scripts/research/neutral.mjs --out ciclo3-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ciclo3
+          path: ciclo3-out
+      - name: Guardar os resultados na branch lab-results
+        if: always()
+        run: |
+          set -e
+          D="ciclo3/$(date -u +%Y-%m-%d_%H%M)-${GITHUB_SHA::7}"
+          mkdir -p /tmp/res && cp -r ciclo3-out/. /tmp/res/
+          git config user.name "dollos-lab"; git config user.email "lab@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin lab-results >/dev/null 2>&1; then
+            git fetch origin lab-results && git checkout -B lab-results origin/lab-results
+          else
+            git checkout --orphan lab-results && git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p "$D" && cp -r /tmp/res/. "$D/"
+          git add "$D" && git commit -m "Resultados do Ciclo 3 ($GITHUB_SHA)" && git push origin lab-results

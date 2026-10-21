@@ -3,46 +3,26 @@
 // Só lê dados públicos de mercado; não envia ordens.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fetchBinance } from '../lib/data.mjs';
 import { f2, pc, sg, pv, iso, table } from '../lib/util.mjs';
 import { toGrid, fundingGrid, buildRows, FEATURES, LOCAL_ONLY, FUND } from './lib/panel.mjs';
-import { fetchFunding } from './lib/funding.mjs';
+import { load as loadData, UNIVERSE, T0, EVAL0, H1 } from './lib/universe.mjs';
 import { walkForward, shiftedTarget, trades, summarize, portfolio, pearson, ST } from './lib/model.mjs';
 
 const A = process.argv.slice(2), arg = (k, d) => { const i = A.indexOf('--' + k); return i >= 0 ? (A[i + 1] && !A[i + 1].startsWith('--') ? A[i + 1] : true) : d; };
 const FUNDING = !!arg('funding', false), OUT = arg('out', FUNDING ? 'ciclo2-out' : 'ciclo1-out'), SYN = arg('synthetic', false), SMALL = !!arg('small', false);
-const UNIVERSE = ['BTC', 'ETH', 'BNB', 'XRP', 'ADA', 'DOGE', 'LTC', 'LINK', 'BCH', 'TRX', 'XLM', 'ATOM', 'ETC', 'VET', 'THETA', 'EOS', 'XTZ', 'NEO', 'IOTA', 'ALGO', 'ZEC', 'DASH', 'ONT', 'QTUM', 'ZIL', 'BAT', 'ENJ', 'MATIC', 'SOL', 'DOT', 'AVAX', 'UNI', 'FIL', 'AAVE', 'SUSHI', 'COMP', 'SNX', 'MKR', 'YFI', '1INCH', 'PAXG', 'EUR'];
-const T0 = Date.UTC(2019, 0, 1), EVAL0 = Date.UTC(2020, 0, 1), H1 = 36e5, C = 12, CSTRESS = 24;
+const C = 12, CSTRESS = 24;
 const TFS = [{ tf: '1h', step: H1, h: 6, retrain: 30 * 24 }, { tf: '1h', step: H1, h: 24, retrain: 30 * 24 }, { tf: '4h', step: 4 * H1, h: 6, retrain: 30 * 6 }, { tf: '1d', step: 24 * H1, h: 5, retrain: 90 }];
 const KS = [1, 1.5, 2, 3], PRIOR = FUNDING ? 16 : 0;   // hipóteses de ciclos anteriores que entram no Holm com p = 1
 let buf = []; const out = (s = '') => { buf.push(s); console.log(s); };
 fs.mkdirSync(OUT, { recursive: true });
 
-function synthetic(names, N1, seed, a, b = 0) {   // a = momentum plantado em 6 barras; b = reversão plantada ligada ao funding (0 = passeio aleatório)
-  const r = ST.rng(seed), gauss = () => { let u = 0; for (let i = 0; i < 6; i++) u += r(); return (u - 3) * Math.SQRT2; }, res = {}, fund = {};
-  const mkt = new Float64Array(N1); for (let i = 0; i < N1; i++) mkt[i] = .0015 * gauss();
-  for (const n of names) { const bars = [], ev = []; let p = 100 * (1 + r()), lr = new Array(6).fill(0), r24 = new Array(24).fill(0), fr = 0; const base = .0035 * (.7 + r() * .6);
-    for (let i = 0; i < N1; i++) { const sg_ = base * Math.exp(.4 * Math.sin(i / 700 + n.length)), z = Math.max(-2, Math.min(2, lr.reduce((s, x) => s + x, 0) / (sg_ * Math.sqrt(6))));
-      if (i % 8 === 0) { const z24 = Math.max(-2, Math.min(2, r24.reduce((s_, x) => s_ + x, 0) / (base * Math.sqrt(24)))); fr = 1e-4 * z24 + 2e-5 * gauss(); ev.push({ t: T0 + i * H1, r: fr }); }
-      const ret = sg_ * gauss() + mkt[i] + a * sg_ * z - b * sg_ * (fr / 1e-4); const o = p; r24.shift(); r24.push(ret); p *= Math.exp(ret); lr.shift(); lr.push(ret);
-      bars.push({ t: T0 + i * H1, o, h: Math.max(o, p) * (1 + .001 * r()), l: Math.min(o, p) * (1 - .001 * r()), c: p, v: 100 + 80 * r() }); }
-    res[n] = bars; fund[n] = ev; }
-  return { res, fund };
-}
-async function load() {
-  const series = {}, info = [], fund = {};
-  if (SYN) { const names = ['BTC', 'ETH', 'SOL', 'ADA', 'XRP', 'LTC', 'DOT', 'LINK'], nul = SYN === 'null', s = synthetic(names, SMALL ? 24000 : 30000, 7, nul ? 0 : (FUNDING ? 0 : .15), nul ? 0 : (FUNDING ? .25 : 0)); for (const n of names) { series[n] = s.res[n]; fund[n] = s.fund[n]; } return { series, info: [], fund }; }
-  const q = [...UNIVERSE]; await Promise.all(Array.from({ length: 4 }, async () => { while (q.length) { const n = q.shift(); const sym = n === 'EUR' ? 'EURUSDT' : n + 'USDT'; try { const b = await fetchBinance(sym, '1h', T0, 120000); if (b.length > 5000) series[n] = b; else info.push(`${n}: poucas barras (${b.length}), ignorada`); } catch (e) { info.push(`${n}: sem dados (${e.message})`); } } }));
-  if (FUNDING) { const q2 = Object.keys(series); await Promise.all(Array.from({ length: 6 }, async () => { while (q2.length) { const n = q2.shift(); try { const ev = await fetchFunding(n + 'USDT'); if (ev.length > 200) fund[n] = ev; else info.push(`${n}: sem funding (${ev.length} eventos)`); } catch (e) { info.push(`${n}: funding falhou (${e.message})`); } } })); }
-  return { series, info, fund };
-}
 const monthOf = (R) => g => new Date(R.t0 + (g + 1) * R.stepMs).toISOString().slice(0, 7);
 const yearOf = (R, g) => new Date(R.t0 + (g + 1) * R.stepMs).getUTCFullYear();
 
 (async () => {
   const t00 = Date.now(); let runs = 0;
   out(`# ${FUNDING ? 'Ciclo 2 — funding como informação nova' : 'Ciclo 1 — previsão conjunta com limiar de custo'} — ${new Date().toISOString()}${SYN ? ` (DADOS SINTÉTICOS ${SYN === 'null' ? 'SEM sinal' : 'COM sinal plantado'}: só teste do código)` : ''}`); out('');
-  const { series: series0, info, fund } = await load(), series = FUNDING ? Object.fromEntries(Object.entries(series0).filter(([n]) => n === 'BTC' || fund[n])) : series0, names = Object.keys(series).sort((a, b) => (a === 'BTC' ? -1 : b === 'BTC' ? 1 : a.localeCompare(b)));
+  const { series: series0, info, fund } = await loadData({ SYN, SMALL, FUNDING }), series = FUNDING ? Object.fromEntries(Object.entries(series0).filter(([n]) => n === 'BTC' || fund[n])) : series0, names = Object.keys(series).sort((a, b) => (a === 'BTC' ? -1 : b === 'BTC' ? 1 : a.localeCompare(b)));
   if (!series.BTC) throw new Error('sem BTC');
   const tEnd = Math.max(...names.map(n => series[n][series[n].length - 1].t)), N1 = Math.floor((tEnd - T0) / H1) + 1, grids = {};
   for (const n of names) grids[n] = toGrid(series[n], T0, N1);

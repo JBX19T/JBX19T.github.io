@@ -22,10 +22,10 @@ export function walkForward(R, { y = R.y, lambda = 1000, retrain, gEval, skip = 
   return { pred, betas };
 }
 /* alvo deslocado circularmente por moeda (controlo negativo) */
-export function shiftedTarget(R, S = 2000) {
+export function shiftedTarget(R, S = 2000, yArr = R.y) {
   const y = new Float32Array(R.n), raw = new Float32Array(R.n), fund = new Float32Array(R.n), per = new Map();
   for (let r = 0; r < R.n; r++) { if (!per.has(R.coin[r])) per.set(R.coin[r], []); per.get(R.coin[r]).push(r); }
-  for (const idx of per.values()) for (let j = 0; j < idx.length; j++) { const s = idx[(j + S) % idx.length]; y[idx[j]] = R.y[s]; raw[idx[j]] = R.raw[s]; fund[idx[j]] = R.fund[s]; }
+  for (const idx of per.values()) for (let j = 0; j < idx.length; j++) { const s = idx[(j + S) % idx.length]; y[idx[j]] = yArr[s]; raw[idx[j]] = R.raw[s]; fund[idx[j]] = R.fund[s]; }
   return { y, raw, fund };
 }
 /* trades: limiar k·C (k = 0 → todos os sinais); posição única por moeda, sem sobreposição */
