@@ -4,7 +4,7 @@ name: Sondagem de fontes de dados
 on:
   push:
     branches: ['ccr-**']
-    paths: ['scripts/probe-data.mjs', '.github/workflows/probe.yml']
+    paths: ['scripts/probe-data.mjs', 'scripts/probe-fees.mjs', '.github/workflows/probe.yml']
   workflow_dispatch:
 
 jobs:
@@ -19,3 +19,4 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/probe-data.mjs
+      - run: node scripts/probe-fees.mjs
