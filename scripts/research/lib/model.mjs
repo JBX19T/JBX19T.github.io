@@ -23,17 +23,17 @@ export function walkForward(R, { y = R.y, lambda = 1000, retrain, gEval, skip = 
 }
 /* alvo deslocado circularmente por moeda (controlo negativo) */
 export function shiftedTarget(R, S = 2000) {
-  const y = new Float32Array(R.n), raw = new Float32Array(R.n), per = new Map();
+  const y = new Float32Array(R.n), raw = new Float32Array(R.n), fund = new Float32Array(R.n), per = new Map();
   for (let r = 0; r < R.n; r++) { if (!per.has(R.coin[r])) per.set(R.coin[r], []); per.get(R.coin[r]).push(r); }
-  for (const idx of per.values()) for (let j = 0; j < idx.length; j++) { const s = idx[(j + S) % idx.length]; y[idx[j]] = R.y[s]; raw[idx[j]] = R.raw[s]; }
-  return { y, raw };
+  for (const idx of per.values()) for (let j = 0; j < idx.length; j++) { const s = idx[(j + S) % idx.length]; y[idx[j]] = R.y[s]; raw[idx[j]] = R.raw[s]; fund[idx[j]] = R.fund[s]; }
+  return { y, raw, fund };
 }
 /* trades: limiar k·C (k = 0 → todos os sinais); posição única por moeda, sem sobreposição */
-export function trades(R, pred, { k, C, raw = R.raw, gLo, gHi }) {
+export function trades(R, pred, { k, C, raw = R.raw, fund = R.fund, gLo, gHi }) {
   const free = new Int32Array(R.names.length), out = [];
   for (let r = 0; r < R.n; r++) { const g = R.g[r]; if (g < gLo || g >= gHi) continue; const p = pred[r]; if (!Number.isFinite(p)) continue; const c = R.coin[r]; if (g < free[c]) continue;
     const pb = Math.abs(p) * R.sigBps[r]; if (k > 0 && pb < k * C) continue; if (p === 0) continue;
-    const side = p > 0 ? 1 : -1, gross = side * raw[r]; free[c] = g + R.h; out.push({ r, g, c, side, gross, net: gross - C, pb }); }
+    const side = p > 0 ? 1 : -1, gross = side * raw[r]; const fc = side * fund[r]; free[c] = g + R.h; out.push({ r, g, c, side, gross, net: gross - C - fc, pb }); }
   return out;
 }
 /* estatística de um conjunto de trades; month(g) → rótulo de cluster */

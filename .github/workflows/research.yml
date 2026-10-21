@@ -5,9 +5,14 @@ on:
     branches: ['ccr-**']
     paths: ['scripts/research/**', 'scripts/lib/data.mjs', 'grokbot/labstats.js', '.github/workflows/research.yml']
   workflow_dispatch:
+    inputs:
+      which:
+        description: 'ciclo1, ciclo2 ou ambos'
+        default: 'ciclo2'
 
 jobs:
   ciclo1:
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.which == 'ciclo1' || github.event.inputs.which == 'ambos')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -42,3 +47,40 @@ jobs:
           fi
           mkdir -p "$D" && cp -r /tmp/res/. "$D/"
           git add "$D" && git commit -m "Resultados do Ciclo 1 ($GITHUB_SHA)" && git push origin lab-results
+
+  ciclo2:
+    if: github.event_name == 'push' || github.event.inputs.which == 'ciclo2' || github.event.inputs.which == 'ambos'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Correr o Ciclo 2 (funding; só dados públicos, sem ordens)
+        run: node scripts/research/edgemap.mjs --funding --out ciclo2-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ciclo2
+          path: ciclo2-out
+      - name: Guardar os resultados na branch lab-results
+        if: always()
+        run: |
+          set -e
+          D="ciclo2/$(date -u +%Y-%m-%d_%H%M)-${GITHUB_SHA::7}"
+          mkdir -p /tmp/res && cp -r ciclo2-out/. /tmp/res/
+          git config user.name "dollos-lab"; git config user.email "lab@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin lab-results >/dev/null 2>&1; then
+            git fetch origin lab-results && git checkout -B lab-results origin/lab-results
+          else
+            git checkout --orphan lab-results && git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p "$D" && cp -r /tmp/res/. "$D/"
+          git add "$D" && git commit -m "Resultados do Ciclo 2 ($GITHUB_SHA)" && git push origin lab-results
