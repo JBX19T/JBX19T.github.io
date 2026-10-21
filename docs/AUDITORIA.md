@@ -269,3 +269,7 @@ Nenhuma está pronta para conta demo de execução, e nenhuma deve operar com di
 
 ### 13.3 Dados
 Qualidade verificada por mercado: velas fora de ordem 0, duplicadas 0, inválidas 0; uma lacuna de 2 velas no EURUSDT 4h. A Hyperliquid devolve só 1 301–1 817 velas de 4h (os mercados `xyz:` existem desde dezembro de 2025 / março de 2026), por isso os 303 dias são o máximo disponível.
+
+## 14. Laboratório de estratégias (2026-10-21)
+Pesquisa de fontes (`docs/PESQUISA-ESTRATEGIAS.md`), biblioteca de 29 famílias e laboratório em lote com testes múltiplos e controlo negativo (`docs/LABORATORIO.md`, `docs/LABORATORIO-RESULTADOS.md`). Resultado: 1 655 configurações, 3 905 simulações, **nenhuma aprovada**; os dados reais não se distinguem do controlo; o teste final não foi usado.
+
