@@ -61,7 +61,9 @@ function makeCtx(bars){
             for(let k=0;k<=d;k++)w[k]-=.3*(gr[k]/rows.length+(k<d?.01*w[k]:0))}}}
       if(w&&X[T]){const d=w.length-1;let z=w[d];for(let k=0;k<d;k++)z+=w[k]*(X[T][k]-mu[k])/sd[k];p[T]=1/(1+Math.exp(-z))}}
     return p});
-  return{n,t,o,h,l,c,v,hasVol,barMs,ema,sma,sdv,atr,roc,don,rsi,adx,macd,stoch,bb,kc,hour,dayOf,vwap,htfTrend,pivots,lastTwo,ml};
+  /* percentil (0..1) do ATR% de cada vela face às últimas w velas */
+  const atrRank=w=>g('atrRank'+w,()=>{const a=atr(14),pct=a.map((x,i)=>x/c[i]),out=NaNs();for(let i=w;i<n;i++){let lt=0;for(let j=i-w+1;j<=i;j++)if(pct[j]<=pct[i])lt++;out[i]=lt/w}return out});
+  return{n,t,o,h,l,c,v,hasVol,barMs,ema,sma,sdv,atr,roc,don,rsi,adx,macd,stoch,bb,kc,hour,dayOf,vwap,htfTrend,pivots,lastTwo,ml,atrRank};
 }
 
 /* ---------- estratégias ----------
@@ -138,6 +140,36 @@ const LIB=[
   build:(P,X)=>{const p=X.ml(P.hz);return{entry:i=>p[i]>P.thr?1:p[i]<1-P.thr?-1:0}}},
  {id:'long200',family:'C. Quantitativas',name:'Referência: só comprado acima da EMA longa (filtro de tendência)',src:['S2'],edge:true,ivs:['4h','1d'],grid:{N:[100,200]},
   build:(P,X)=>{const e=X.ema(X.c,P.N);return{entry:i=>X.c[i]>e[i]?1:0,exit:i=>X.c[i]<e[i]?1:0}}},
+
+ /* diagnóstico do rompimento atual: parte da regra do bot (N=20, EMA 20/50) e permite mudar UM fator de cada vez. Não entra na enumeração normal (diag). */
+ {id:'brkx',diag:true,family:'A. Price action',name:'Rompimento atual com um fator de cada vez (diagnóstico)',src:['G'],edge:false,ivs:['1h','4h','1d'],
+  grid:{N:[20],f:[20],s:[50],conf:[0],ext:[0],adx:[0],vol:[''],surge:[0],sess:[''],mom:[''],retest:[0]},
+  build:(P,X)=>{
+    const ef=X.ema(X.c,P.f),es=P.s?X.ema(X.c,P.s):null,hi=X.don(P.N,true),lo=X.don(P.N,false),a=X.atr(14),ax=X.adx(14),rk=X.atrRank(250),vs=X.hasVol?X.sma(X.v,20,'vsma20'):null,r10=X.roc(10),rs=X.rsi(14);
+    const filt=(i,dir,lvl)=>{
+      if(P.ext>0&&(dir>0?X.c[i]-lvl:lvl-X.c[i])>P.ext*a[i])return false;
+      if(P.adx>0&&!(ax.adx[i]>=P.adx))return false;
+      if(P.vol==='hi'&&!(rk[i]>=.5))return false;
+      if(P.vol==='lo'&&!(rk[i]<=.3))return false;
+      if(P.vol==='exp'&&!((X.h[i]-X.l[i])>=1.5*a[i]))return false;
+      if(P.surge>0){if(!vs)return false;if(!(X.v[i]>=P.surge*vs[i-1]))return false}
+      const hr=X.hour(i);
+      if(P.sess==='eu'&&!(hr>=7&&hr<15))return false;
+      if(P.sess==='us'&&!(hr>=13&&hr<21))return false;
+      if(P.sess==='noasia'&&!(hr>=7))return false;
+      if(P.mom==='roc'&&!(dir>0?r10[i]>0:r10[i]<0))return false;
+      if(P.mom==='rsi'&&!(dir>0?rs[i]>55:rs[i]<45))return false;
+      return true};
+    return{entry:i=>{
+      const tu=!es||ef[i]>es[i],td=!es||ef[i]<es[i];
+      if(P.retest>0){   // reteste: rompimento nas últimas `retest` velas e regresso à perto do nível, fechando do lado certo
+        for(let j=i-P.retest;j<i;j++){if(j<1)continue;
+          if(X.c[j]>hi[j]&&tu&&X.l[i]<=hi[j]+.5*a[i]&&X.c[i]>hi[j]&&X.c[i]>X.o[i]&&filt(i,1,hi[j]))return 1;
+          if(X.c[j]<lo[j]&&td&&X.h[i]>=lo[j]-.5*a[i]&&X.c[i]<lo[j]&&X.c[i]<X.o[i]&&filt(i,-1,lo[j]))return -1}
+        return 0}
+      if(X.c[i]>hi[i]+P.conf*a[i]&&tu&&filt(i,1,hi[i]))return 1;
+      if(X.c[i]<lo[i]-P.conf*a[i]&&td&&filt(i,-1,lo[i]))return -1;
+      return 0}}}},
 ];
 
 /* ---------- saídas (gestão de posição) ---------- */
@@ -147,15 +179,17 @@ const EXITS={
   C:{label:'stop 3×ATR, stop móvel 3×ATR',p:{stopATR:3,tpATR:0,trailATR:3},holdH:480},
   E:{label:'stop 3×ATR, saída por sinal contrário',p:{stopATR:3,tpATR:0},holdH:480,sigExit:true},
   F:{label:'stop 2×ATR, break-even a 1,5×ATR, alvo 3×ATR',p:{stopATR:2,tpATR:3,beATR:1.5},holdH:96},
+  S:{label:'preset Swing de produção: stop 2×ATR, stop móvel 3×ATR, até 60 velas diárias',p:{stopATR:2,tpATR:0,trailATR:3},holdH:1440},
 };
+const STD_EXITS=['A','B','C','E','F'];   // as cinco saídas da enumeração normal; S só se pede de propósito
 const BASE={...D.DEFAULTS,start:10000,ddStop:.20,dayLoss:.05};   // = MACRO.BASE do Macro Desk
 
 function product(grid){const keys=Object.keys(grid);let out=[{}];for(const k of keys){const nx=[];for(const o of out)for(const v of grid[k])nx.push({...o,[k]:v});out=nx}return out}
 const pkey=P=>Object.entries(P).map(([k,v])=>k+'='+(Array.isArray(v)?v.join('/'):v)).join(',');
 /* expande a biblioteca em configurações: estratégia × parâmetros × saída, para um tamanho de vela */
-function configs(iv,{only=null,exits=Object.keys(EXITS)}={}){
+function configs(iv,{only=null,exits=STD_EXITS,diag=false}={}){
   const out=[];
-  for(const S of LIB){if(only&&!only.includes(S.id))continue;if(!S.ivs.includes(iv))continue;
+  for(const S of LIB){if(S.diag&&!diag)continue;if(only&&!only.includes(S.id))continue;if(!S.ivs.includes(iv))continue;
     for(const P of product(S.grid)){if(S.valid&&!S.valid(P))continue;
       for(const e of exits)out.push({id:`${S.id}[${pkey(P)}]/${e}`,sid:S.id,P,exit:e,iv})}}
   return out;
@@ -184,6 +218,7 @@ function signalAtFor(conf,cfg){
     return{dir:raw>0?'long':'short',why:'sinal',...base};
   };
 }
-const api={makeCtx,LIB,EXITS,BASE,configs,cfgFor,signalAtFor,byId,pkey};
+const mkConf=(sid,P,exit,iv)=>({id:`${sid}[${pkey(P)}]/${exit}`,sid,P,exit,iv});
+const api={makeCtx,LIB,EXITS,BASE,configs,cfgFor,signalAtFor,byId,pkey,mkConf};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DLAB=api;
 })(typeof window!=='undefined'?window:globalThis);
