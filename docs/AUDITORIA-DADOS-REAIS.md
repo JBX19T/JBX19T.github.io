@@ -1,8 +1,8 @@
-<!-- Relatório gerado por scripts/audit-real.mjs (workflow «Auditoria em dados reais», execução 39586149443, commit c6c0363, 2026-10-21 10:39 UTC).
-     Dados: velas públicas da Hyperliquid (xyz:GOLD, xyz:SP500, xyz:EUR) e da Binance (PAXGUSDT, EURUSDT). Nos blocos «métrica», a linha «antes de custos / custos» mostra o funding
+<!-- Relatório gerado por scripts/audit-real.mjs (workflow «Auditoria em dados reais», execução 39586632792, commit 484704f, 2026-10-21 10:43 UTC).
+     Dados: velas públicas da Hyperliquid (xyz:GOLD, xyz:SP500, xyz:EUR) e da Binance (PAXGUSDT, EURUSDT). Na linha «antes de custos / custos» o funding aparece
      como custo: valor negativo = funding recebido. Para repetir: node scripts/audit-real.mjs. -->
 
-# Auditoria quantitativa em dados reais — 2026-10-21T10:39:17.906Z
+# Auditoria quantitativa em dados reais — 2026-10-21T10:43:17.369Z
 
 Motor: grokbot/backtest.js (o mesmo da app). Custos: taxa 9 bps (taker) / 3 bps (maker), slippage 3 bps (stop 5 bps), conta $10 000, risco 1% por trade, alavancagem máx. 5×, paragens −20% / −5% dia. Execução: sinal ao fecho da vela, ordem a mercado à abertura seguinte.
 
@@ -41,7 +41,7 @@ Período 2026-08-30 → 2026-10-21 (52 dias) · mercados: GOLD 4995 velas, SPX 4
 | ganho médio / perda média / relação | — / — / — |
 | expectativa por trade | — · — R (R ponderado pelo risco —) |
 | incerteza da expectativa em R | desvio — · IC95% por blocos [—, —] · P(média>0) — · t — (n=0) |
-| antes de custos / custos | — R / — R por trade · taxas $0.00 · slippage $0.00 · funding $0.00 |
+| antes de custos / custos | — R / — R por trade · taxas $0.00 · slippage $0.00 · funding (custo; negativo = recebido) $0.00 |
 | queda máxima | $0.00 (0.0%) · maior sequência de perdas 0 |
 | comprar e manter | GOLD -7.7% · SPX -0.0% · EURUSD -3.1% |
 
@@ -87,7 +87,8 @@ Período 2025-12-22 → 2026-10-21 (303 dias) · mercados: GOLD 1817 velas, SPX 
 | ganho médio / perda média / relação | $69.08 / -$64.43 / 1.07 |
 | expectativa por trade | -$2.38 · -0.02 R (R ponderado pelo risco -0.02) |
 | incerteza da expectativa em R | desvio 0.82 · IC95% por blocos [-0.18, +0.15] · P(média>0) 40% · t -0.21 (n=71) |
-| antes de custos / custos | +0.12 R / 0.14 R por trade · taxas $735.21 · slippage $254.55 · funding -$1.14 |
+| antes de custos / custos | +0.12 R / 0.14 R por trade · taxas $735.21 · slippage $254.55 · funding (custo; negativo = recebido) -$1.14 |
+| risco por trade ($ = 1 R) | mín $98.55 · mediana $101.76 · máx $106.66 (varia com a conta) · Σ R -1.46 · Σ $ -$168.72 · Σ $ ÷ risco médio -1.65 R |
 | queda máxima | $834.87 (7.8%) · maior sequência de perdas 5 |
 | comprar e manter | GOLD -6.7% · SPX 17.1% · EURUSD -4.8% |
 
@@ -184,7 +185,8 @@ Período 2025-12-22 → 2026-10-21 (303 dias) · mercados: GOLD 1817 velas, SPX 
 | ganho médio / perda média / relação | $180.46 / -$83.85 / 2.15 |
 | expectativa por trade | -$0.38 · +0.01 R (R ponderado pelo risco -0.00) |
 | incerteza da expectativa em R | desvio 1.54 · IC95% por blocos [-0.40, +0.45] · P(média>0) 49% · t 0.03 (n=38) |
-| antes de custos / custos | +0.17 R / 0.16 R por trade · taxas $438.85 · slippage $195.04 · funding -$11.34 |
+| antes de custos / custos | +0.17 R / 0.16 R por trade · taxas $438.85 · slippage $195.04 · funding (custo; negativo = recebido) -$11.34 |
+| risco por trade ($ = 1 R) | mín $98.11 · mediana $102.33 · máx $109.38 (varia com a conta) · Σ R +0.30 · Σ $ -$14.47 · Σ $ ÷ risco médio -0.14 R |
 | queda máxima | $1201.35 (10.9%) · maior sequência de perdas 9 |
 | comprar e manter | GOLD -6.7% · SPX 17.1% · EURUSD -4.8% |
 
@@ -279,7 +281,8 @@ Período 2026-03-27 → 2026-10-21 (208 dias) · mercados: GOLD 4995 velas, SPX 
 | ganho médio / perda média / relação | $95.38 / -$77.40 / 1.23 |
 | expectativa por trade | $16.84 · +0.17 R (R ponderado pelo risco +0.17) |
 | incerteza da expectativa em R | desvio 1.04 · IC95% por blocos [-0.14, +0.51] · P(média>0) 86% · t 0.55 (n=11) |
-| antes de custos / custos | +0.34 R / 0.17 R por trade · taxas $135.55 · slippage $47.04 · funding $2.34 |
+| antes de custos / custos | +0.34 R / 0.17 R por trade · taxas $135.55 · slippage $47.04 · funding (custo; negativo = recebido) $2.34 |
+| risco por trade ($ = 1 R) | mín $97.81 · mediana $100.00 · máx $101.76 (varia com a conta) · Σ R +1.89 · Σ $ $185.25 · Σ $ ÷ risco médio +1.85 R |
 | queda máxima | $225.41 (2.3%) · maior sequência de perdas 2 |
 | comprar e manter | GOLD -7.6% · SPX 18.6% · EURUSD -2.7% |
 
@@ -371,7 +374,8 @@ Período 2020-01-03 → 2026-10-21 (2483 dias) · mercados: GOLD 13469 velas, EU
 | ganho médio / perda média / relação | $35.73 / -$40.39 / 0.88 |
 | expectativa por trade | -$12.21 · -0.15 R (R ponderado pelo risco -0.16) |
 | incerteza da expectativa em R | desvio 0.67 · IC95% por blocos [-0.21, -0.08] · P(média>0) 0% · t -3.76 (n=289) |
-| antes de custos / custos | +0.01 R / 0.15 R por trade · taxas $2506.26 · slippage $879.80 · funding $0.00 |
+| antes de custos / custos | +0.01 R / 0.15 R por trade · taxas $2506.26 · slippage $879.80 · funding (custo; negativo = recebido) $0.00 |
+| risco por trade ($ = 1 R) | mín $63.80 · mediana $71.89 · máx $100.27 (varia com a conta) · Σ R -42.84 · Σ $ -$3528.79 · Σ $ ÷ risco médio -46.37 R |
 | queda máxima | $3683.79 (36.7%) · maior sequência de perdas 17 |
 | comprar e manter | GOLD 112.3% · EURUSD 0.8% |
 
@@ -527,7 +531,8 @@ Período 2020-01-03 → 2026-10-21 (2483 dias) · mercados: GOLD 13469 velas, EU
 | ganho médio / perda média / relação | $92.97 / -$65.77 / 1.41 |
 | expectativa por trade | -$14.71 · -0.16 R (R ponderado pelo risco -0.19) |
 | incerteza da expectativa em R | desvio 1.20 · IC95% por blocos [-0.33, +0.02] · P(média>0) 4% · t -1.77 (n=171) |
-| antes de custos / custos | +0.01 R / 0.17 R por trade · taxas $1574.61 · slippage $681.32 · funding $0.00 |
+| antes de custos / custos | +0.01 R / 0.17 R por trade · taxas $1574.61 · slippage $681.32 · funding (custo; negativo = recebido) $0.00 |
+| risco por trade ($ = 1 R) | mín $67.76 · mediana $74.71 · máx $100.00 (varia com a conta) · Σ R -27.71 · Σ $ -$2516.01 · Σ $ ÷ risco médio -32.51 R |
 | queda máxima | $3269.61 (32.5%) · maior sequência de perdas 21 |
 | comprar e manter | GOLD 112.3% · EURUSD 0.8% |
 
@@ -684,7 +689,8 @@ Período 2020-01-03 → 2026-10-20 (2482 dias) · mercados: GOLD 2245 velas, EUR
 | ganho médio / perda média / relação | $138.53 / -$76.62 / 1.81 |
 | expectativa por trade | $16.28 · +0.17 R (R ponderado pelo risco +0.17) |
 | incerteza da expectativa em R | desvio 1.66 · IC95% por blocos [-0.13, +0.50] · P(média>0) 85% · t 0.94 (n=88) |
-| antes de custos / custos | +0.29 R / 0.12 R por trade · taxas $712.30 · slippage $309.98 · funding $0.00 |
+| antes de custos / custos | +0.29 R / 0.12 R por trade · taxas $712.30 · slippage $309.98 · funding (custo; negativo = recebido) $0.00 |
+| risco por trade ($ = 1 R) | mín $88.33 · mediana $94.66 · máx $114.43 (varia com a conta) · Σ R +14.60 · Σ $ $1433.02 · Σ $ ÷ risco médio +14.83 R |
 | queda máxima | $1339.76 (13.2%) · maior sequência de perdas 5 |
 | comprar e manter | GOLD 111.8% · EURUSD 0.8% |
 
@@ -827,7 +833,8 @@ Período 2020-01-03 → 2026-10-21 (2483 dias) · mercados: GOLD 13469 velas, EU
 | ganho médio / perda média / relação | $109.91 / -$86.98 / 1.26 |
 | expectativa por trade | -$9.89 · -0.10 R (R ponderado pelo risco -0.12) |
 | incerteza da expectativa em R | desvio 1.23 · IC95% por blocos [-0.25, +0.05] · P(média>0) 10% · t -1.23 (n=212) |
-| antes de custos / custos | +0.04 R / 0.14 R por trade · taxas $1726.61 · slippage $664.90 · funding $0.00 |
+| antes de custos / custos | +0.04 R / 0.14 R por trade · taxas $1726.61 · slippage $664.90 · funding (custo; negativo = recebido) $0.00 |
+| risco por trade ($ = 1 R) | mín $72.56 · mediana $78.99 · máx $100.00 (varia com a conta) · Σ R -21.90 · Σ $ -$2097.18 · Σ $ ÷ risco médio -26.09 R |
 | queda máxima | $2820.00 (28.1%) · maior sequência de perdas 9 |
 | comprar e manter | GOLD 112.3% · EURUSD 0.8% |
 
