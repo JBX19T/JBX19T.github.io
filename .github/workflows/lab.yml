@@ -1,0 +1,44 @@
+name: Laboratório de estratégias
+
+# Investigação: simula centenas de configurações de estratégias sobre velas públicas (Binance, Hyperliquid) com o motor de teste da app.
+# Só lê dados de mercado: não usa segredos nem envia ordens. Os resultados completos ficam no artefacto e na branch «lab-results».
+on:
+  push:
+    branches: ['ccr-**']
+    paths: ['scripts/lab-run.mjs', 'grokbot/lab.js', 'grokbot/labstats.js', 'grokbot/backtest.js', 'grokbot/strategy.js', '.github/workflows/lab.yml']
+  workflow_dispatch:
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Correr o laboratório
+        run: node scripts/lab-run.mjs --out lab-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: laboratorio
+          path: lab-out
+      - name: Guardar os resultados na branch lab-results
+        if: always()
+        run: |
+          set -e
+          D="resultados/$(date -u +%Y-%m-%d_%H%M)-${GITHUB_SHA::7}"
+          mkdir -p /tmp/res && cp -r lab-out/. /tmp/res/ && gzip -9 /tmp/res/experimentos.jsonl
+          git config user.name "dollos-lab"; git config user.email "lab@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin lab-results >/dev/null 2>&1; then
+            git fetch origin lab-results && git checkout -B lab-results origin/lab-results
+          else
+            git checkout --orphan lab-results && git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p "$D" && cp -r /tmp/res/. "$D/"
+          git add "$D" && git commit -m "Resultados do laboratório ($GITHUB_SHA)" && git push origin lab-results

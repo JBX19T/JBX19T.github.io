@@ -53,7 +53,7 @@ const isScalp=(strategy,iv)=>strategy==='scalp'||SCALP_INTERVALS.includes(iv);
 function withStrategy(cfg,name){
   const k=PRESETS[name]?name:'breakout';
   // os parâmetros próprios de cada estratégia voltam ao valor comum antes de aplicar os da escolhida (não herdam de outra)
-  const reset={fast:DEFAULTS.fast,slow:DEFAULTS.slow,brk:DEFAULTS.brk,atrN:DEFAULTS.atrN,stopATR:DEFAULTS.stopATR,tpATR:DEFAULTS.tpATR,maxHoldBars:DEFAULTS.maxHoldBars,trailATR:0,maxCostR:DEFAULTS.maxCostR,flatEOD:false,noEntryHours:0};
+  const reset={fast:DEFAULTS.fast,slow:DEFAULTS.slow,brk:DEFAULTS.brk,atrN:DEFAULTS.atrN,stopATR:DEFAULTS.stopATR,tpATR:DEFAULTS.tpATR,maxHoldBars:DEFAULTS.maxHoldBars,trailATR:0,beATR:0,maxCostR:DEFAULTS.maxCostR,flatEOD:false,noEntryHours:0};
   return{...cfg,...reset,...PRESETS[k].p,strategy:k};
 }
 function make(CFG,nMarkets=3){
@@ -113,10 +113,12 @@ function make(CFG,nMarkets=3){
   const signal={breakout,reversion,trend,trail:breakout,pullback,scalp:reversion,daytrade:breakout,swing:breakout}[kind];
   /* stop móvel: devolve o novo stop depois de uma vela (só aperta, nunca alarga). p = {side, stop, best, atr} */
   const trailStop=(p,bar)=>{
-    if(!(CFG.trailATR>0)||!(p.atr>0))return p.stop;
+    if(!(p.atr>0)||!(CFG.trailATR>0||CFG.beATR>0))return p.stop;
     const best=p.side>0?Math.max(p.best??bar.h,bar.h):Math.min(p.best??bar.l,bar.l);p.best=best;
-    const s=best-p.side*CFG.trailATR*p.atr;
-    return p.side>0?Math.max(p.stop,s):Math.min(p.stop,s);
+    let s=p.stop;
+    if(CFG.trailATR>0){const t=best-p.side*CFG.trailATR*p.atr;s=p.side>0?Math.max(s,t):Math.min(s,t)}
+    if(CFG.beATR>0&&(best-p.entry)*p.side>=CFG.beATR*p.atr)s=p.side>0?Math.max(s,p.entry):Math.min(s,p.entry);   // break-even: depois de beATR×ATR a favor, o stop sobe até à entrada
+    return s;
   };
   const cost=()=>CFG.costBps/1e4;
   const sizeFor=(eq,entry,stopDist)=>{const riskUsd=eq*CFG.riskPct,n=riskUsd/(stopDist/entry);return Math.min(n,eq*CFG.maxLev/nMarkets)};

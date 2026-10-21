@@ -42,18 +42,25 @@ function simulate(barsByKey,cfgIn,opts={}){
   const slip=(cfg.slipBps||0)/1e4,slipStop=(cfg.slipStopBps??cfg.slipBps??0)/1e4,tpLimit=cfg.tpMode!=='market';
   const barMs=cfg.barMs||(()=>{for(const k of Object.keys(barsByKey)){const b=barsByKey[k];if(b&&b.length>2){const d=[];for(let i=1;i<Math.min(b.length,60);i++)d.push(b[i].t-b[i-1].t);d.sort((x,y)=>x-y);return d[d.length>>1]}}return 36e5})();
   const FI=fundingIndex(opts.funding);
+  const sigAt=typeof opts.signalAt==='function'?opts.signalAt:null;   // gancho do laboratório: sinal calculado sobre indicadores pré-calculados (k,i,barras) em vez de st.signal(janela)
+  const xq={};let expoBars=0,slots=0;
+  // diagnóstico: para cada vela avaliada, porque entrou ou não entrou (contagens; opts.log guarda também o detalhe por vela)
+  const stNF=D.make({...cfg,minATRpct:0},opts.nMarkets||3);   // mesmas regras sem o filtro de custo: mostra quantos sinais ele bloqueou
+  const diag={bars:0,reasons:{},wouldBe:{long:0,short:0},accepted:{long:0,short:0},minATRpct:D.minATRpct(cfg),atr:{},log:opts.log?[]:null};
+  const why1=(r,n=1)=>{diag.reasons[r]=(diag.reasons[r]||0)+n};
+  const category=w=>/^velas \d/.test(w)?'aquecimento (velas insuficientes)':/^custo/.test(w)?'filtro de custo (custo por trade acima do máximo em R)':/muito baixa/.test(w)?'volatilidade muito baixa':/extrema/.test(w)?'volatilidade extrema':/sem rompimento/.test(w)?'sem rompimento':/cruzamento/.test(w)?'sem cruzamento novo':/perto da média/.test(w)?'perto da média':/^RSI2/.test(w)?'RSI2 fora dos extremos':/sem variação/.test(w)?'sem variação':'outro: '+w;
   const keys=Object.keys(barsByKey).filter(k=>barsByKey[k]&&barsByKey[k].length);
   const ix={},times=new Set();
   for(const k of keys){ix[k]=new Map();barsByKey[k].forEach((b,i)=>{ix[k].set(b.t,i);times.add(b.t)})}
   const timeline=[...times].sort((a,b)=>a-b);
   let cash=cfg.start,peak=cash,top=cash,maxDD=0,halted=null,dayKey='',dayEq=cash,t0=null,tEnd=0;
-  const pos={},pend={},qe={},last={},trades=[],curve=[],halts={dd:0,day:0},orders={placed:0,filled:0};let firstHalt=null;
+  const pos={},pend={},qe={},last={},trades=[],curve=[],halts={dd:0,day:0},orders={signals:0,placed:0,filled:0};let firstHalt=null;
   const unreal=(p,px)=>p.side*(px-p.entry)/p.entry*p.notional;
   const eqNow=()=>{let e=cash;for(const k in pos)e+=unreal(pos[k],last[k])-pos[k].fund;return e};
   // pxRaw: preço de mercado da saída; o slippage piora-o e a taxa sai do resultado. Entrada: p.entry já inclui taxa e slippage.
   const closeAt=(k,pxRaw,t,why,fee=taker,slipOut=slip)=>{const p=pos[k],px=pxRaw*(1-p.side*slipOut),fees=p.notional*(p.fee+fee),slipUsd=p.notional*(p.slipIn+slipOut),
     pnl=unreal(p,px)-p.notional*fee-p.fund;cash+=pnl;
-    trades.push({k,side:p.side,o:p.o,c:t,en:p.entry,ex:px,nt:p.notional,pnl,why,bars:p.held,risk:p.notional*p.sf,costUsd:fees+slipUsd+p.fund,fees,slipUsd,fund:p.fund});delete pos[k]};
+    trades.push({k,side:p.side,o:p.o,c:t,en:p.entry,ex:px,nt:p.notional,pnl,why,bars:p.held,risk:p.notional*p.sf,atrPct:p.atr>0?p.atr/p.entry:null,costUsd:fees+slipUsd+p.fund,fees,slipUsd,fund:p.fund});delete pos[k]};
   const flatten=(t,why)=>{for(const k of Object.keys(pos))closeAt(k,last[k],t,why);for(const k of Object.keys(pend))delete pend[k];for(const k of Object.keys(qe))delete qe[k]};
   const openPos=(k,side,refPx,fee,slipIn,o)=>{const entry=refPx*(1+side*(fee+slipIn));
     pos[k]={side,entry,fee,slipIn,notional:o.notional,stop:0,tp:null,o:o.t,held:0,sf:o.stopDist/entry,fund:0,fundH:Math.floor(o.t/H),atr:o.atr};
@@ -75,12 +82,15 @@ function simulate(barsByKey,cfgIn,opts={}){
       orders.filled++;const p=openPos(k,o.side,o.limit,makerFee,0,{...o,t});
       p.fresh=true;   // na vela em que enche só pode sair pelo stop (não se sabe a ordem dos movimentos)
     }
+    // 1a) saídas por sinal (só com o gancho do laboratório): fecham à abertura desta vela, a mercado
+    for(const k of Object.keys(xq)){const i=ix[k].get(t);if(i==null)continue;delete xq[k];if(pos[k])closeAt(k,barsByKey[k][i].o,t,'sinal de saída',taker,slip)}
     // 1b) ordens a mercado geradas ao fecho da vela anterior: enchem à abertura desta vela, com taxa e slippage
     for(const k of Object.keys(qe)){
       const i=ix[k].get(t);if(i==null)continue;
-      const o=qe[k];delete qe[k];if(halted||pos[k])continue;
+      const o=qe[k];delete qe[k];if(halted||pos[k]){why1('ordem descartada ao abrir (proteção ativa ou posição aberta)');continue}
       const b=barsByKey[k][i],stopDist=cfg.stopATR*o.atr,tpDist=cfg.tpATR*o.atr;
-      const notional=st.sizeFor(eqNow(),b.o*(1+o.side*(taker+slip)),stopDist);if(!(notional>1))continue;
+      const notional=st.sizeFor(eqNow(),b.o*(1+o.side*(taker+slip)),stopDist);if(!(notional>1)){why1('ordem não enviada (tamanho da posição abaixo de $1)');continue}
+      orders.placed++;orders.filled++;
       openPos(k,o.side,b.o,taker,slip,{notional,stopDist,tpDist,t,atr:o.atr});
     }
     // 2) saídas (stop, alvo, tempo) com a vela deste instante
@@ -96,6 +106,7 @@ function simulate(barsByKey,cfgIn,opts={}){
       else if(p.held>=cfg.maxHoldBars)closeAt(k,b.c,t,'time-stop');
       if(pos[k])pos[k].stop=st.trailStop(pos[k],b);   // stop móvel: só vale a partir da vela seguinte
     }
+    slots+=keys.length;for(const k of keys)if(pos[k])expoBars++;
     // 2b) day trade: à última vela do dia UTC fecha tudo a mercado (nunca dorme com posição)
     if(st.isEOD(t+barMs)){for(const k of Object.keys(pos)){const i=ix[k].get(t);if(i!=null)closeAt(k,barsByKey[k][i].c,t,'fim do dia')}for(const k of Object.keys(pend))delete pend[k];for(const k of Object.keys(qe))delete qe[k]}
     // 3) proteção de capital (como no desk: -20% desde o máximo fecha tudo; -5% num dia pausa até amanhã)
@@ -107,13 +118,24 @@ function simulate(barsByKey,cfgIn,opts={}){
       else if(e<=dayEq*(1-cfg.dayLoss)){flatten(t,'limite diário');halted={kind:'day'};halts.day++;e=eqNow()}
     }
     // 4) entradas
-    if(!halted)for(const k of keys){
-      const i=ix[k].get(t);if(i==null||pos[k]||pend[k])continue;
-      if(st.noEntry(t+barMs))continue;   // day trade: não abre nas últimas horas do dia
-      const sig=st.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));
-      if(sig.dir!=='long'&&sig.dir!=='short')continue;
-      const b=barsByKey[k][i],side=sig.dir==='long'?1:-1,stopDist=cfg.stopATR*sig.atr,tpDist=cfg.tpATR*sig.atr;
-      if(maker){const notional=st.sizeFor(eqNow(),b.c,stopDist);if(!(notional>1))continue;pend[k]={side,limit:b.c,notional,stopDist,tpDist,t,atr:sig.atr};orders.placed++}
+    for(const k of keys){
+      const i=ix[k].get(t);if(i==null)continue;
+      if(sigAt&&pos[k]&&!xq[k]){const s2=sigAt(k,i,barsByKey[k]);if(s2&&s2.exit===pos[k].side)xq[k]=true}
+      const note=(dir,w,extra)=>{if(diag.log&&diag.log.length<50000)diag.log.push({t,k,dir,why:w,...extra})};
+      if(halted){why1('proteção de capital ativa (sem novas entradas)');note('flat','proteção de capital ativa');continue}
+      if(pos[k]||pend[k]||qe[k]){why1('posição ou ordem já aberta neste mercado');continue}
+      if(st.noEntry(t+barMs)){why1('janela sem entradas (day trade: últimas horas do dia)');note('flat','janela sem entradas');continue}
+      const b=barsByKey[k][i],sig=sigAt?sigAt(k,i,barsByKey[k]):st.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));
+      diag.bars++;
+      const ap=sig.atr>0?sig.atr/b.c:null;if(ap!=null)(diag.atr[k]??=[]).push(ap);
+      if(sig.dir!=='long'&&sig.dir!=='short'){
+        const cat=category(sig.why||'');why1(cat);
+        if(!sigAt&&/^filtro de custo|muito baixa/.test(cat)){const nf=stNF.signal(barsByKey[k].slice(Math.max(0,i-WIN+1),i+1));if(nf.dir==='long'||nf.dir==='short')diag.wouldBe[nf.dir]++}
+        note(sig.dir,sig.why,{atrPct:ap});continue;
+      }
+      diag.accepted[sig.dir]++;orders.signals++;note(sig.dir,sig.why,{atrPct:ap,action:'sinal aceite'});
+      const side=sig.dir==='long'?1:-1,stopDist=cfg.stopATR*sig.atr,tpDist=cfg.tpATR*sig.atr;
+      if(maker){const notional=st.sizeFor(eqNow(),b.c,stopDist);if(!(notional>1)){why1('ordem não enviada (tamanho da posição abaixo de $1)');continue}pend[k]={side,limit:b.c,notional,stopDist,tpDist,t,atr:sig.atr};orders.placed++}
       else qe[k]={side,atr:sig.atr};   // ordem a mercado: só pode ser enviada depois do fecho; enche à abertura seguinte
     }
     curve.push([t,eqNow()]);
@@ -121,7 +143,10 @@ function simulate(barsByKey,cfgIn,opts={}){
   const open=Object.keys(pos).length;flatten(tEnd,'fim do teste');
   const bh={},bars={};
   for(const k of keys){const b=barsByKey[k].filter(x=>(opts.from==null||x.t>=opts.from)&&(opts.to==null||x.t<opts.to));bars[k]=b.length;bh[k]=b.length>1?b[b.length-1].c/b[0].o-1:0}
-  return{cfg,trades,curve,halts,maxDD,openAtEnd:open,finalCash:cash,firstHalt,bh,start:t0||0,end:tEnd,bars,orders};
+  const pc=(a,q)=>a[Math.min(a.length-1,Math.floor(q*a.length))];
+  const atrSum={};for(const k of Object.keys(diag.atr)){const a=diag.atr[k].slice().sort((x,y)=>x-y);atrSum[k]={n:a.length,p10:pc(a,.1),p50:pc(a,.5),p90:pc(a,.9),max:a[a.length-1],aboveMin:a.filter(x=>x>=diag.minATRpct).length/a.length}}
+  diag.atr=atrSum;
+  return{cfg,trades,curve,halts,maxDD,openAtEnd:open,finalCash:cash,firstHalt,bh,start:t0||0,end:tEnd,bars,orders,diag,exposure:slots?expoBars/slots:0};
 }
 
 const sum=a=>a.reduce((s,x)=>s+x.pnl,0);
@@ -143,6 +168,8 @@ function summarize(res){
     strategy:res.cfg.strategy||'breakout',exec:res.cfg.exec==='maker'?'maker':'taker',orders:res.orders,
     maxDD:res.maxDD,halts:res.halts,firstHalt:res.firstHalt,from:res.start,to:res.end,days:res.end&&res.start?(res.end-res.start)/864e5:0,
     byMarket:group(t=>t.k),byReason:group(t=>t.why),byMonth:group(t=>new Date(t.c).toISOString().slice(0,7)),
+    avgRw:rt.length?sum(rt)/rt.reduce((s,t)=>s+t.risk,0):null,   // R ponderado pelo risco: Σ resultado / Σ risco (tem sempre o sinal do resultado em $)
+    openAtEnd:res.openAtEnd,diag:res.diag,finalCash:res.finalCash,startCash:res.cfg.start,
     bh:res.bh,bars:res.bars,sparkline:pts.map(p=>p[1]),_trades:tr};
 }
 
@@ -185,6 +212,110 @@ function research(barsByKey,cfg,opts={}){
   return{rows,best,pass,split,minA:MIN_A,minB:MIN_B,minT:MIN_T};
 }
 
-const api={simulate,summarize,runAll,research,prepCfg};
+
+/* ===== auditoria estatística (só lê as trades; não muda nada no teste) ===== */
+function rng(seed){let a=seed>>>0;return()=>{a=(a+0x6D2B79F5)>>>0;let t=a;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}}
+const q=(a,p)=>{const b=a.slice().sort((x,y)=>x-y);return b.length?b[Math.min(b.length-1,Math.max(0,Math.floor(p*b.length)))]:null};
+const sd=a=>{if(a.length<2)return null;const m=a.reduce((x,y)=>x+y,0)/a.length;return Math.sqrt(a.reduce((s,x)=>s+(x-m)**2,0)/(a.length-1))};
+/* intervalo de confiança da média por "bootstrap por blocos": reamostra blocos de trades consecutivas (por data de fecho), para respeitar
+   a dependência entre trades vizinhas (mesmo regime, mercados correlacionados). Determinístico (semente fixa). */
+function blockBootstrap(xs,{block=5,reps=2000,seed=12345}={}){
+  const n=xs.length;if(n<8)return{lo:null,hi:null,pPos:null,block:0};
+  const L=Math.min(block,n),r=rng(seed),means=[];
+  for(let b=0;b<reps;b++){let sum=0,c=0;while(c<n){const st=Math.floor(r()*n);for(let j=0;j<L&&c<n;j++,c++)sum+=xs[(st+j)%n]}means.push(sum/n)}
+  return{lo:q(means,.025),hi:q(means,.975),pPos:means.filter(m=>m>0).length/reps,block:L};
+}
+const SESSIONS=[['Ásia 00-08 UTC',0,8],['Europa 08-13 UTC',8,13],['EUA 13-21 UTC',13,21],['Noite 21-24 UTC',21,24]];
+function analyze(res){
+  const tr=res.trades.slice().sort((a,b)=>a.c-b.c),n=tr.length,start=res.cfg.start;
+  const w=tr.filter(t=>t.pnl>0),l=tr.filter(t=>t.pnl<=0),gw=sum(w),gl=-sum(l),net=sum(tr);
+  const rt=tr.filter(t=>t.risk>0),Rs=rt.map(t=>t.pnl/t.risk),mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  const avgR=mean(Rs),s=sd(Rs),ci=blockBootstrap(Rs);
+  let streak=0,maxStreak=0,ddUsd=0,peak=start;
+  for(const t of tr){streak=t.pnl>0?0:streak+1;maxStreak=Math.max(maxStreak,streak)}
+  for(const [,e] of res.curve){if(e>peak)peak=e;ddUsd=Math.max(ddUsd,peak-e)}
+  const grp=f=>{const o={};for(const t of tr){const g=f(t);if(g==null)continue;const x=(o[g]??={n:0,wins:0,pnl:0,rs:[]});x.n++;if(t.pnl>0)x.wins++;x.pnl+=t.pnl;if(t.risk>0)x.rs.push(t.pnl/t.risk)}for(const g of Object.keys(o)){o[g].avgR=mean(o[g].rs);delete o[g].rs}return o};
+  const aps=rt.map(t=>t.atrPct).filter(x=>x>0),c1=q(aps,1/3),c2=q(aps,2/3);
+  return{n,wins:w.length,losses:l.length,hit:n?w.length/n:null,grossWin:gw,grossLoss:gl,net,netPct:net/start,pf:gl>0?gw/gl:(gw>0?Infinity:null),
+    avgWin:w.length?gw/w.length:null,avgLoss:l.length?-gl/l.length:null,payoff:w.length&&l.length?(gw/w.length)/(gl/l.length):null,
+    expUsd:n?net/n:null,expR:avgR,sdR:s,tR:s>0?avgR/(s/Math.sqrt(Rs.length)):null,ci,
+    maxDDpct:res.maxDD,maxDDusd:ddUsd,maxLossStreak:maxStreak,
+    costs:{fees:tr.reduce((x,t)=>x+(t.fees||0),0),slip:tr.reduce((x,t)=>x+(t.slipUsd||0),0),funding:tr.reduce((x,t)=>x+(t.fund||0),0)},
+    grossBeforeCosts:net+tr.reduce((x,t)=>x+(t.costUsd||0),0),
+    byMarket:grp(t=>t.k),byExit:grp(t=>t.why),byMonth:grp(t=>new Date(t.c).toISOString().slice(0,7)),
+    bySession:grp(t=>{const h=new Date(t.o).getUTCHours();const x=SESSIONS.find(z=>h>=z[1]&&h<z[2]);return x?x[0]:null}),
+    byVol:aps.length>=9?grp(t=>t.atrPct>0?(t.atrPct<=c1?'ATR baixo (1/3 inferior)':t.atrPct<=c2?'ATR médio':'ATR alto (1/3 superior)'):null):{},
+    openAtEnd:res.openAtEnd};
+}
+/* recalcula tudo a partir da lista de trades e compara com o que o relatório mostra; devolve as inconsistências (lista vazia = tudo coerente) */
+function crossCheck(res,sm){
+  const out=[],tr=res.trades,eps=1e-6,near=(a,b,t=eps)=>Math.abs(a-b)<=t*Math.max(1,Math.abs(a),Math.abs(b));
+  const net=tr.reduce((x,t)=>x+t.pnl,0),sdr=sm||summarize(res);
+  if(!near(res.finalCash-res.cfg.start,net))out.push(`conta final − inicial (${(res.finalCash-res.cfg.start).toFixed(4)}) ≠ soma dos resultados das trades (${net.toFixed(4)})`);
+  if(sdr.n!==tr.length)out.push('número de trades difere');
+  if(sdr.wins+sdr.losses!==tr.length)out.push('vitórias + derrotas ≠ trades');
+  if(!near(sdr.net,net))out.push('resultado líquido difere');
+  const gw=tr.filter(t=>t.pnl>0).reduce((x,t)=>x+t.pnl,0),gl=-tr.filter(t=>t.pnl<=0).reduce((x,t)=>x+t.pnl,0);
+  if(gl>0&&!near(sdr.pf,gw/gl))out.push('fator de lucro difere');
+  const rt=tr.filter(t=>t.risk>0),avgR=rt.length?rt.reduce((x,t)=>x+t.pnl/t.risk,0)/rt.length:null;
+  if(avgR!=null&&!near(sdr.avgR,avgR))out.push('média em R difere');
+  if(avgR!=null&&sdr.avgGrossR!=null&&sdr.costR!=null&&!near(sdr.avgGrossR-sdr.costR,sdr.avgR))out.push('R bruto − custos em R ≠ R líquido');
+  const costs=tr.reduce((x,t)=>x+t.costUsd,0),parts=tr.reduce((x,t)=>x+t.fees+t.slipUsd+t.fund,0);
+  if(!near(costs,parts))out.push('custos totais ≠ taxas + slippage + funding');
+  if(sdr.avgRw!=null&&Math.sign(Math.round(sdr.avgRw*1e9))!==Math.sign(Math.round(net*1e9)))out.push('R ponderado pelo risco com sinal diferente do resultado');
+  return out;
+}
+/* inverso da normal (Acklam, precisão ~1e-9) para o limiar corrigido pelo número de variantes testadas */
+function qnorm(p){
+  const a=[-39.69683028665376,220.9460984245205,-275.9285104469687,138.357751867269,-30.66479806614716,2.506628277459239],
+    b=[-54.47609879822406,161.5858368580409,-155.6989798598866,66.80131188771972,-13.28068155288572],
+    c=[-.007784894002430293,-.3223964580411365,-2.400758277161838,-2.549732539343734,4.374664141464968,2.938163982698783],
+    d=[.007784695709041462,.3224671290700398,2.445134137142996,3.754408661907416];
+  const lo=.02425,hi=1-lo;let x;
+  if(p<lo){const t=Math.sqrt(-2*Math.log(p));x=(((((c[0]*t+c[1])*t+c[2])*t+c[3])*t+c[4])*t+c[5])/((((d[0]*t+d[1])*t+d[2])*t+d[3])*t+1)}
+  else if(p>hi){const t=Math.sqrt(-2*Math.log(1-p));x=-(((((c[0]*t+c[1])*t+c[2])*t+c[3])*t+c[4])*t+c[5])/((((d[0]*t+d[1])*t+d[2])*t+d[3])*t+1)}
+  else{const t=p-.5,r=t*t;x=(((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*t/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)}
+  return x;
+}
+/* protocolo em três partes cronológicas: desenvolvimento (escolher), validação (confirmar) e teste final (só se olha uma vez).
+   Regra fixada antes de ver resultados: uma variante só é "promissora" se, face à referência, tiver melhor R médio no desenvolvimento
+   E na validação E R médio positivo na validação. O teste final só é calculado para a referência e para as promissoras.
+   Cada hipótese muda UM parâmetro. O número de variantes entra no limiar de significância (Bonferroni). */
+function protocol(barsByKey,cfg,hyps,opts={}){
+  const times=[...new Set(Object.values(barsByKey).flatMap(b=>(b||[]).map(x=>x.t)))].sort((a,b)=>a-b);
+  if(times.length<200)return null;
+  const fr=opts.fracs||[.5,.25,.25],t1=times[Math.floor(times.length*fr[0])],t2=times[Math.floor(times.length*(fr[0]+fr[1]))];
+  const segs={dev:{to:t1},val:{from:t1,to:t2},test:{from:t2}};
+  const cands=[{id:'base',hypothesis:'referência (parâmetros originais)',override:{}},...hyps];
+  const run=(c,seg)=>{const r=simulate(barsByKey,cfg,{override:c.override,funding:opts.funding,...segs[seg]}),sm=summarize(r),a=analyze(r);
+    return{n:sm.n,avgR:sm.avgR,avgGrossR:sm.avgGrossR,pf:sm.pf,netPct:sm.netPct,maxDD:sm.maxDD,tR:sm.tR,ciLo:a.ci.lo,ciHi:a.ci.hi,pPos:a.ci.pPos}};
+  const rows=cands.map(c=>({id:c.id,hypothesis:c.hypothesis,override:c.override,dev:run(c,'dev'),val:run(c,'val')}));
+  const base=rows[0];
+  for(const r of rows){
+    r.promising=r.id==='base'?null:!!(r.dev.avgR!=null&&base.dev.avgR!=null&&r.val.avgR!=null&&base.val.avgR!=null&&r.dev.avgR>base.dev.avgR&&r.val.avgR>base.val.avgR&&r.val.avgR>0);
+    r.test=(r.id==='base'||r.promising)?run(cands.find(c=>c.id===r.id),'test'):null;
+  }
+  const k=rows.length,zAdj=qnorm(1-0.025/k);
+  return{split:[t1,t2],rows,variantsTested:k,tCrit:{single:1.96,adjusted:zAdj}};
+}
+
+
+/* métricas de risco/retorno a partir da curva da conta (valores diários, UTC): Sharpe e Sortino anualizados (365 dias), CAGR, Calmar,
+   fator de recuperação, pior período debaixo de água e exposição ao mercado (fração de velas×mercados com posição aberta) */
+function perf(res){
+  const start=res.cfg.start,cv=res.curve||[];
+  const empty={sharpe:null,sortino:null,cagr:null,calmar:null,recovery:null,underwaterDays:0,exposure:res.exposure??null,returnPct:res.finalCash!=null?res.finalCash/start-1:null,days:0};
+  if(cv.length<3)return empty;
+  const days=new Map();for(const [t,e] of cv)days.set(Math.floor(t/864e5),e);
+  const ds=[...days.keys()].sort((a,b)=>a-b),eq=ds.map(d=>days.get(d));
+  const rets=[];let prev=start;for(const e of eq){rets.push(e/prev-1);prev=e}
+  const m=rets.reduce((x,y)=>x+y,0)/rets.length,sdv=Math.sqrt(rets.reduce((x,y)=>x+(y-m)**2,0)/(rets.length-1||1));
+  const dn=Math.sqrt(rets.reduce((x,y)=>x+Math.min(y,0)**2,0)/rets.length);
+  const years=Math.max(1,(ds[ds.length-1]-ds[0]+1))/365,fin=eq[eq.length-1],cagr=fin>0?(fin/start)**(1/years)-1:-1;
+  let peak=start,ddUsd=0,uw=0,maxUw=0;for(const e of eq){if(e>=peak){peak=e;uw=0}else{uw++;maxUw=Math.max(maxUw,uw)}ddUsd=Math.max(ddUsd,peak-e)}
+  return{sharpe:sdv>0?m/sdv*Math.sqrt(365):null,sortino:dn>0?m/dn*Math.sqrt(365):null,cagr,calmar:res.maxDD>0?cagr/res.maxDD:null,
+    recovery:ddUsd>0?(fin-start)/ddUsd:null,underwaterDays:maxUw,exposure:res.exposure??null,returnPct:fin/start-1,days:ds.length};
+}
+const api={simulate,summarize,runAll,research,prepCfg,analyze,crossCheck,blockBootstrap,protocol,qnorm,perf};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.BT=api;
 })(typeof window!=='undefined'?window:globalThis);
