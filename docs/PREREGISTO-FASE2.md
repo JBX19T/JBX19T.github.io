@@ -81,3 +81,26 @@ Sem hipóteses a confirmar: análise descritiva (estratégias distintas, decompo
 - O Yahoo Finance é uma fonte não oficial e pode ter erros de OHLC (câmbio) ou ajustes; sem alternativa acessível (o Stooq está bloqueado, a FRED só tem fecho).
 - ETFs, índices e câmbio têm custos reais diferentes dos 9 bps da Hyperliquid. Por isso há sensibilidade 3 / 9 / 18 bps.
 - Comprar o índice S&P 500 tem uma tendência de fundo positiva; um R médio positivo em compras pode vir dessa deriva e não de «timing». As estatísticas separam compras e vendas.
+
+---
+
+## Adenda 1 — escrita DEPOIS de ver os resultados das Partes A, B e C (e antes de correr o que se segue)
+
+**Transparência:** esta adenda nasce de resultados já vistos, por isso as hipóteses H5 e H6 são *exploratórias*. A única proteção contra o enviesamento é o que fica fixado aqui antes da corrida seguinte.
+
+**O que se viu (resumo, resultados completos em `LABORATORIO-FASE2.md`):** na Parte B, em dados da Binance (desenvolvimento+validação), nenhuma das 29 experiências em 4h «melhorou» a regra atual depois de Holm; em 1d, duas passaram (Holm 0,013): filtrar rompimentos com **vela de expansão (amplitude ≥ 1,5 ATR)** e com **volume ≥ 1,5× a média de 20 velas**; a ordem limitada (maker) também passou, mas isso é uma suposição de custo (3 bps em vez de 9) e não uma propriedade da estratégia, por isso não é testada como hipótese. Em 1h, «ATR baixo» apareceu como «melhora», mas com 0 trades: uma variante que não negoceia **não** é uma melhoria.
+
+**Regra de validade acrescentada (mais exigente, não menos):** uma «melhora» só conta se a variante tiver pelo menos 30 trades no período em que é medida.
+
+**Hipóteses a validar em dados independentes (mesmas séries, janelas e custos da §1):**
+
+| Id | Regra (exatamente) | Séries |
+|---|---|---|
+| H5 | `brkx[N=20,f=20,s=50,vol=exp]/A`: a regra atual do bot com a exigência de a vela do rompimento ter amplitude (máx − mín) ≥ 1,5 ATR; saída A (stop 2×ATR, alvo 3×ATR) | as 7 séries |
+| H6 | `brkx[N=20,f=20,s=50,surge=1.5]/A`: a regra atual com volume da vela do rompimento ≥ 1,5× a média de 20 velas | só as séries com volume (S&P 500, GLD, TLT, BTC, ETH); câmbio fica de fora porque não tem volume |
+
+**Estatística e decisão:** idênticas às de §1 (bootstrap por blocos de calendário, mesmas 6 condições), com Holm sobre as **2** hipóteses H5 e H6. Para comparação, mostra-se a regra atual (REF) nas mesmas séries. «Aprovada para paper» exige as 6 condições; uma melhoria sobre REF que não chegue a R > 0 com significância é «inconclusiva» ou «rejeitada», nunca aprovada.
+
+**Contexto já conhecido que o resultado tem de superar:** nas séries independentes a regra atual (REF) deu R médio −0,10 (2 314 trades, t = −8,3). Uma variante com R ≈ 0 é só «menos má».
+
+**Execução:** `node scripts/lab2.mjs --parts D`. A Parte D só usa estas duas hipóteses e a REF. As Partes A, B e C não são repetidas nem alteradas.
