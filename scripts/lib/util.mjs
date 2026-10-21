@@ -1,0 +1,10 @@
+export const f2 = (v, d = 2) => v == null || !Number.isFinite(v) ? '—' : v.toFixed(d);
+export const pc = (v, d = 1) => v == null || !Number.isFinite(v) ? '—' : (v * 100).toFixed(d) + '%';
+export const sg = (v, d = 2) => v == null || !Number.isFinite(v) ? '—' : (v >= 0 ? '+' : '') + v.toFixed(d);
+export const pv = v => v == null || !Number.isFinite(v) ? '—' : v < 0.001 ? '<0.001' : v.toFixed(3);
+export const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+export const sd = a => { if (a.length < 2) return null; const m = mean(a); return Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1)); };
+export const pctl = (a, q) => { const b = a.filter(Number.isFinite).sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(q * b.length))] : null; };
+export const iso = t => new Date(t).toISOString().slice(0, 10);
+export const month = t => new Date(t).toISOString().slice(0, 7);
+export const table = (head, rows) => [`| ${head.join(' | ')} |`, `|${head.map(() => '---').join('|')}|`, ...rows.map(r => `| ${r.join(' | ')} |`)].join('\n');

@@ -1,0 +1,46 @@
+name: Laboratório fase 2
+
+# Investigação: auditoria das experiências, diagnóstico do rompimento e hipóteses de tendência em dados independentes.
+# Só lê dados públicos (Binance, Yahoo Finance). Não usa segredos nem envia ordens. Hipóteses e regras: docs/PREREGISTO-FASE2.md
+on:
+  push:
+    branches: ['ccr-**']
+    paths: ['scripts/lab2*.mjs', 'scripts/lib/**', 'grokbot/lab.js', 'grokbot/labstats.js', 'grokbot/backtest.js', 'grokbot/strategy.js', '.github/workflows/lab2.yml']
+  workflow_dispatch:
+
+jobs:
+  lab2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Correr a fase 2
+        run: node scripts/lab2.mjs --out lab2-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: laboratorio-fase2
+          path: lab2-out
+      - name: Guardar os resultados na branch lab-results
+        if: always()
+        run: |
+          set -e
+          D="fase2/$(date -u +%Y-%m-%d_%H%M)-${GITHUB_SHA::7}"
+          mkdir -p /tmp/res && cp -r lab2-out/. /tmp/res/
+          git config user.name "dollos-lab"; git config user.email "lab@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin lab-results >/dev/null 2>&1; then
+            git fetch origin lab-results && git checkout -B lab-results origin/lab-results
+          else
+            git checkout --orphan lab-results && git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p "$D" && cp -r /tmp/res/. "$D/"
+          git add "$D" && git commit -m "Resultados do laboratório fase 2 ($GITHUB_SHA)" && git push origin lab-results

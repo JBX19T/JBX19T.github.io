@@ -169,7 +169,8 @@ const LIB=[
         return 0}
       if(X.c[i]>hi[i]+P.conf*a[i]&&tu&&filt(i,1,hi[i]))return 1;
       if(X.c[i]<lo[i]-P.conf*a[i]&&td&&filt(i,-1,lo[i]))return -1;
-      return 0}}}},
+      return 0},
+    exit:i=>X.c[i]<lo[i]?1:X.c[i]>hi[i]?-1:0}}},   // saída por sinal: fecho além do canal oposto (estilo Turtle)
 ];
 
 /* ---------- saídas (gestão de posição) ---------- */

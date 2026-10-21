@@ -126,4 +126,46 @@ function series(n, step, vol, seed, p0 = 100, withVol = true) {
   assert.ok(ran >= 25 && withTrades >= 15, `${ran} famílias, ${withTrades} com trades`);
   ok(`L8 ${ran} famílias correm no motor (${withTrades} com trades) e o recálculo cruzado fica coerente; ${(Date.now() - t0)} ms`);
 }
+
+// L9 inferência da Fase 2: Holm, Reality Check/SPA, bootstrap por clusters e emparelhado, teste da entrada
+{
+  assert.deepEqual(ST.holm([.01, .04, .03, .005]), [.03, .06, .06, .02]);
+  const idx = ST.statIdx(5000, 20, ST.rng(1)); assert.ok(idx.every(v => v >= 0 && v < 5000)); let jumps = 0; for (let i = 1; i < idx.length; i++) if (idx[i] !== (idx[i - 1] + 1) % 5000) jumps++; assert.ok(jumps > 150 && jumps < 400, 'blocos de média ~20: saltos ' + jumps);
+  const gauss = seed => { const r = ST.rng(seed); return () => { let a = 0; for (let i = 0; i < 12; i++) a += r(); return a - 6; }; };
+  let rej = 0; for (let t = 0; t < 12; t++) { const g = gauss(100 + t), M = Array.from({ length: 60 }, () => Array.from({ length: 500 }, g)); if (ST.realityCheck(M, { B: 200, seed: t + 1 }).pSPA < .05) rej++; }
+  assert.ok(rej <= 3, 'em ruído puro a taxa de falsos positivos fica perto de 5%: ' + rej + '/12');
+  const g = gauss(7), M = Array.from({ length: 60 }, () => Array.from({ length: 500 }, g)); M.push(Array.from({ length: 500 }, () => g() + .25));
+  const rc = ST.realityCheck(M, { B: 300 }); assert.equal(rc.best, 60); assert.ok(rc.pRC < .02 && rc.pSPA < .02, `edge plantado: RC ${rc.pRC} SPA ${rc.pSPA}`);
+  const vals = Array.from({ length: 400 }, (_, i) => (i % 7 === 0 ? 2 : -.5)), cl = Array.from({ length: 400 }, (_, i) => Math.floor(i / 20));
+  const cb = ST.clusterBootstrap(vals, cl, { B: 2000 }); assert.ok(Math.abs(cb.mean - ST.mean(vals)) < 1e-12 && cb.lo < cb.mean && cb.hi > cb.mean && cb.clusters === 20);
+  const g2 = gauss(3), A = Array.from({ length: 600 }, () => g2()), Bz = A.map(x => x - .3 + g2() * .3), pb = ST.pairedBootstrap(A, Bz, { B: 1500 }); assert.ok(pb.mean > .2 && pb.pOne < .01, 'diferença emparelhada positiva: ' + JSON.stringify(pb));
+  const pb0 = ST.pairedBootstrap(A, A.map(x => x + g2() * .01), { B: 1500 }); assert.ok(pb0.pOne > .05 && pb0.pOne < .95, 'sem diferença: ' + pb0.pOne);
+  // teste da entrada: série de ruído com subidas plantadas depois de cada sinal
+  const r = ST.rng(21); let p = 100; const bars = [];
+  for (let i = 0; i < 3000; i++) { const o = p; p *= 1 + (r() - .5) * .006; bars.push({ t: T0 + i * H4, o, h: Math.max(o, p) * 1.001, l: Math.min(o, p) * .999, c: p }); }
+  const sigs = []; for (let i = 100; i < 2900; i += 50) { sigs.push({ i, side: 1 }); for (let k = 1; k <= 6; k++) { const b = bars[i + k], o = bars[i + k - 1].c, c = o * 1.006; Object.assign(b, { o, c, h: c * 1.001, l: o * .999 }); if (i + k + 1 < bars.length) { /* continuidade */ } } }
+  for (let i = 1; i < bars.length; i++) { const sh = bars[i - 1].c - bars[i].o; if (Math.abs(sh) > 0) { const f = bars[i - 1].c / bars[i].o; bars[i].o *= f; bars[i].h *= f; bars[i].l *= f; bars[i].c *= f; } }
+  const X = LAB.makeCtx(bars), ee = ST.entryEdge(X, sigs, [6], { B: 800 })[0];
+  assert.ok(ee.meanR > .8 && ee.pR < .01 && ee.eRatio > 2, 'entrada com vantagem plantada: ' + JSON.stringify(ee));
+  const rnd = ST.rng(5), fake = Array.from({ length: 56 }, () => ({ i: 100 + Math.floor(rnd() * 2800), side: 1 })).sort((a, b) => a.i - b.i), X2 = LAB.makeCtx(series(3000, H4, .006, 77, 100, false));
+  let sig = 0; for (let t = 0; t < 8; t++) { const rr = ST.rng(40 + t), f = Array.from({ length: 56 }, () => ({ i: 100 + Math.floor(rr() * 2800), side: rr() < .5 ? 1 : -1 })); const e = ST.entryEdge(X2, f, [6], { B: 400, seed: t + 1 })[0]; if (e.pR < .05) sig++; }
+  assert.ok(sig <= 2, 'entradas aleatórias raramente «têm vantagem»: ' + sig + '/8');
+  assert.deepEqual(ST.decluster([{ i: 1 }, { i: 5 }, { i: 60 }, { i: 70 }, { i: 130 }], 50).map(x => x.i), [1, 60, 130]);
+  ok(`L9 Holm, Reality Check/SPA (ruído: ${rej}/12 falsos positivos; edge plantado p=${rc.pRC.toFixed(3)}), bootstrap por clusters e emparelhado, teste da entrada (plantada: R ${ee.meanR.toFixed(2)}, p ${ee.pR.toFixed(3)}; aleatória: ${sig}/8)`);
+}
+// L10 família de diagnóstico brkx: reproduz a regra atual e cada filtro só pode REMOVER sinais
+{
+  const bars = series(3000, H4, .008, 12, 100), X = LAB.makeCtx(bars), base = { N: 20, f: 20, s: 50, conf: 0, ext: 0, adx: 0, vol: '', surge: 0, sess: '', mom: '', retest: 0 };
+  const b0 = LAB.byId.brkx.build(base, X), ref = LAB.byId.brk_ema.build({ brk: 20 }, X);
+  let nb = 0; for (let i = 0; i < bars.length; i++) { assert.equal(b0.entry(i), ref.entry(i), 'brkx base = regra atual em ' + i); if (ref.entry(i)) nb++; }
+  assert.ok(nb > 40, 'sinais base: ' + nb);
+  const filters = [{ ext: 1 }, { ext: 2 }, { adx: 20 }, { adx: 30 }, { vol: 'hi' }, { vol: 'lo' }, { vol: 'exp' }, { surge: 1.5 }, { sess: 'eu' }, { sess: 'us' }, { sess: 'noasia' }, { mom: 'roc' }, { mom: 'rsi' }, { conf: .5 }, { conf: 1 }];
+  let removed = 0;
+  for (const f of filters) { const v = LAB.byId.brkx.build({ ...base, ...f }, X); let n = 0; for (let i = 0; i < bars.length; i++) { const a = v.entry(i); if (a) { n++; assert.equal(a, ref.entry(i), `${JSON.stringify(f)} só remove sinais (vela ${i})`); } } assert.ok(n <= nb, JSON.stringify(f)); removed += nb - n; }
+  assert.ok(removed > 0, 'os filtros removem sinais');
+  for (const f of [{ retest: 6 }, { s: 0 }, { N: 40 }, { f: 10, s: 30 }]) { const full = LAB.byId.brkx.build({ ...base, ...f }, X); for (const i of [900, 1500, 2100, 2700]) assert.equal(full.entry(i), LAB.byId.brkx.build({ ...base, ...f }, LAB.makeCtx(bars.slice(0, i + 1))).entry(i), 'sem dados futuros ' + JSON.stringify(f)); }
+  const conf = LAB.mkConf('brkx', base, 'A', '4h'), cfg = LAB.cfgFor(conf, H4), r = BT.simulate({ GOLD: bars }, cfg, { signalAt: LAB.signalAtFor(conf, cfg), nMarkets: 1 }); assert.ok(r.trades.length >= 0);
+  assert.equal(LAB.configs('4h').filter(c => c.sid === 'brkx').length, 0, 'brkx fica fora da enumeração normal');
+  ok(`L10 brkx: igual à regra atual (${nb} sinais); 15 filtros só removem sinais (${removed} removidos); reteste, sem filtro de tendência, N=40 e EMA 10/30 sem dados futuros`);
+}
 console.log('lab ok');
