@@ -220,3 +220,52 @@ Notas honestas:
 - O fecho de fim do dia só acontece com a app aberta ou com o piloto automático ligado; fora disso ficam apenas o stop e o alvo na corretora.
 - O backtest compara cada modo só com a sua própria família (não mistura com as cinco clássicas).
 - Testes: `worker/test/modes.test.mjs` (definições, fecho de fim do dia, janela sem entradas, swing diário, Macro Desk, piloto, aprovação).
+
+## 13. Auditoria quantitativa em dados reais (2026-10-21)
+
+Relatório completo, gerado por `scripts/audit-real.mjs` com dados públicos da Hyperliquid e da Binance: `docs/AUDITORIA-DADOS-REAIS.md`. Corre no GitHub Actions (workflow «Auditoria em dados reais») porque o ambiente de desenvolvimento não chega a estas APIs. Repetível: `node scripts/audit-real.mjs`.
+
+**Correção de contexto:** o DOLLOS não usa o MetaTrader 5. Opera com a API da Hyperliquid (mercados `xyz:` de ouro, S&P 500 e EUR/USD) e Jupiter/Solana. Não há spreads, swaps nem lotes de MT5: os custos modelados são taxa taker/maker, slippage e funding da Hyperliquid.
+
+### 13.1 O que foi acrescentado ao motor
+- **Diagnóstico por vela** (`simulate().diag`): para cada vela avaliada, a razão da entrada ou da recusa, sinais que o filtro de custo bloqueou, ATR% face ao mínimo exigido e a cadeia sinais → ordens → execuções → trades. Aparece na app («Porque entrou ou não entrou») e, com `opts.log`, como CSV por vela.
+- **Veredicto honesto com 0 trades:** deixou de dizer «teria perdido 0,0 %»; diz que não houve operações e porquê.
+- **Estatísticas completas** (`analyze`): ganhos/perdas brutos, relação ganho/perda, expectativa em $ e R, queda em $ e %, maior sequência de perdas, custos por componente, e desempenho por mercado, saída, sessão (UTC), regime de volatilidade (terços do ATR%) e mês.
+- **Recálculo cruzado** (`crossCheck`): recalcula contagens, resultado, fator de lucro, R e custos a partir das trades e compara com o relatório; conta final − inicial tem de igualar a soma das trades.
+- **Incerteza:** intervalo de confiança a 95 % da média em R por *bootstrap por blocos* (trades consecutivas, para respeitar a dependência) e estatística t.
+- **R ponderado pelo risco** (Σ resultado ÷ Σ risco) ao lado do R simples, e média por trade em $.
+- **Protocolo em 3 partes** (`protocol`): desenvolvimento / validação / teste final; hipóteses de um só parâmetro fixadas antes de correr; regra de «promissora» fixada antes; teste final só para a referência e as promissoras; limiar t corrigido pelo número de variantes (Bonferroni).
+- Testes: `worker/test/quant.test.mjs` (8 grupos, resultados definidos antes de correr).
+
+### 13.2 Respostas
+
+**1. Porque é que o Rompimento 15 min não fez operações?** Demonstrado: o filtro de custo recusou **99,0 %** das velas avaliadas (14 835 de 14 985). O ATR típico em 15 min é de 0,12 % no ouro (mediana), 0,05 % no S&P 500 e 0,03 % no EUR/USD, e o filtro exige pelo menos 0,60 % (custo de ida e volta ≤ 15 % do risco com 9 bps de taxa). Nenhuma vela de nenhum mercado passou o mínimo. Não há erro de dados (velas ordenadas, sem duplicados, sem lacunas, sem velas inválidas) nem de indexação: sem o filtro há 532 trades (−90,3 %, fator de lucro 0,06, **−3,97 R por trade**: o custo vale vários R quando o stop é minúsculo); com custo de 2 bps há 98 trades e −20,7 % (fator 0,52). O filtro está correto e faz parte das regras; o que a 15 min não existe é vantagem bruta suficiente. 1 140 sinais foram bloqueados (535 compra, 605 venda).
+
+**2. Porque é que o Day trade 4h foi negativo?** Reproduzido exatamente (71 trades, −$168,72, fator 0,93). **Antes de custos ganha +0,12 R por trade e os custos são 0,14 R**: taxas $735 + slippage $255 sobre 71 trades. Sem slippage seria +0,4 %. Take-profit (+$1 507) e stop-loss (−$1 553) anulam-se. Incerteza: IC95 % da média em R [−0,18; +0,15], t = −0,21: indistinguível de zero. No histórico longo (Binance, 6,8 anos, ouro e EUR/USD, 289 trades) é **negativo com significância**: −0,15 R por trade, IC [−0,21; −0,08], t = −3,76; antes de custos +0,01 R (não há vantagem bruta). Ressalva: PAXG e EURUSDT são proxies, e a taxa de 9 bps é suposição (ver §9).
+
+**3. A média por operação do Swing 4h está bem calculada?** Sim. Recalculado a partir das trades: 38 trades, Σ ganhos $2 165,54, Σ perdas $2 180,02, líquido −$14,47 (−$0,38 por trade); fator de lucro 0,99; R bruto +0,17 − custos 0,16 = +0,01 R. A aparente contradição (+0,01 R com resultado negativo) vem de a média simples em R dar o mesmo peso a cada trade, enquanto o risco em $ varia com a conta (1 % da conta de cada momento); o R ponderado pelo risco (Σ resultado ÷ Σ risco) dá −0,00 R, com o sinal do resultado. Reproduzido com números conhecidos em `quant.test.mjs` (Q5). Em qualquer das medidas o valor é zero: IC95 % [−0,40; +0,45], t = 0,03. Não há operações abertas no fim, nem parciais.
+
+**4. Erros confirmados e corrigidos nesta fase?** Nenhum erro de cálculo no motor: o recálculo cruzado ficou coerente nas 8 corridas e a cadeia sinais → ordens → execuções → trades conserva-se em todas. Corrigidos: (a) o veredicto com 0 trades era enganador; (b) faltava ao relatório o diagnóstico de entradas, o R ponderado e a incerteza; (c) a «média por trade» só existia em R. As correções de fidelidade do motor (entrada na abertura seguinte, custos, stops, gaps) são as da auditoria anterior (§1).
+
+**5. O que melhorou ou piorou os resultados?** Nada foi retocado para melhorar resultados. As 8 hipóteses de um só parâmetro (stop móvel 4×, EMA 100, rompimento 40, stop 3×; sem alvo, alvo 2×, stop 3×, rompimento 40) foram testadas no protocolo em 3 partes: nos dados longos nenhuma do Day trade nem do Swing 4h foi promissora. As três que cumpriram a regra (rompimento de 40 velas no Day trade 4h e no Swing 4h da Hyperliquid, e no Swing 1d) não se confirmaram no teste final, exceto a do Swing 1d, que não difere da referência: Day trade HL −0,27 R (10 trades), Swing 4h HL −0,32 R (7 trades), Swing 1d +0,83 R (20 trades, IC [−0,02; +1,82], t 1,53; a referência deu +0,75 R). Os parâmetros por omissão ficam como estão.
+
+**6. Há expectativa positiva fora da amostra?** Só o **Swing em velas diárias** aponta para cima, sem prova: 88 trades (ouro e EUR/USD, 2020–2026), +0,17 R por trade, fator 1,37, +14,3 %, queda 13,2 %; por partes: desenvolvimento −0,21 R (43 trades), validação +0,26 R (21), teste final +0,75 R [+0,05; +1,52] (24 trades, t = 1,47, abaixo do 2,58 exigido com 5 variantes). Teste em duas partes da app: 2.ª parte +0,74 R, t = 2,03 (precisa 2,5): **não passa**. Sobre a amostra inteira t = 0,94 e o IC [−0,13; +0,50] inclui zero. Todo o ganho vem do ouro (+$1 434, +0,26 R; EUR/USD +0,01 R) e 6 trades de longa duração dão $902 dos $1 433; o ouro subiu +112 % no período (comprar e manter bate o swing por larga margem). O padrão (negativo no 1.º período, positivo depois) é compatível com «seguir uma alta forte do ouro», não com vantagem independente do regime.
+
+**7. Sobreajuste e limitações:** foram corridos 8 estudos × várias hipóteses; o melhor foi escolhido depois de ver todos, por isso o seu resultado deve ser lido com desconto. Amostras pequenas (Day trade 1h: 11 trades). Proxies (PAXG, EURUSDT) com custos supostos iguais aos da Hyperliquid. Funding real só em parte das horas (≈28 % nos 303 dias da Hyperliquid) e ausente na Binance. S&P 500 só tem 6–7 trades. Não há spread/profundidade de livro nem tamanho mínimo de ordem da Hyperliquid no modelo (com $10 reais pode nem ser possível abrir a posição calculada).
+
+**8. Testes adicionais necessários:** (a) medir a taxa real e o slippage real na Hyperliquid em testnet/conta demo com ordens pequenas (o worker já regista); (b) repetir o Swing diário em mais instrumentos, com a hipótese fixada **antes** de olhar (ouro, índices), para separar vantagem de tendência do ouro; (c) papel em tempo real durante meses, só com o Swing diário, sem alterar regras; (d) simular o tamanho mínimo de ordem e arredondamentos de `szDecimals`.
+
+**9. Estado de cada estratégia**
+
+| Estratégia | Estado | Evidência |
+|---|---|---|
+| Rompimento 15 min | **não validada** | 0 trades (filtro de custo); sem filtro −90 %; a 2 bps −20,7 % |
+| Day trade 4h / 1h | **não validada**, evidência contra | 303 d: −0,02 R (t −0,21); 6,8 anos: −0,15 R, t −3,76 |
+| Swing 4h | **não validada** | 303 d: +0,01 R (t 0,03); 6,8 anos: −0,16 R (t −1,77) |
+| Swing 1d | **em investigação** | +0,17 R mas IC inclui 0, t 0,94; não passa o teste (t 2,03 < 2,5) |
+| Reversão, tendência, stop móvel, RSI 2, scalping | não validadas (auditoria §8, §11) | sem vantagem após custos |
+
+Nenhuma está pronta para conta demo de execução, e nenhuma deve operar com dinheiro real. O **Swing diário** é a única que merece seguir em papel, sem mexer nas regras.
+
+### 13.3 Dados
+Qualidade verificada por mercado: velas fora de ordem 0, duplicadas 0, inválidas 0; uma lacuna de 2 velas no EURUSDT 4h. A Hyperliquid devolve só 1 301–1 817 velas de 4h (os mercados `xyz:` existem desde dezembro de 2025 / março de 2026), por isso os 303 dias são o máximo disponível.
