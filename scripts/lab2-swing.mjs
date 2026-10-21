@@ -10,10 +10,11 @@ export const SERIES = [
   { key: 'BTC', sym: 'BTC-USD', label: 'Bitcoin' },
   { key: 'ETH', sym: 'ETH-USD', label: 'Ethereum' },
 ];
-async function evalFamily(C, keys, HYP) {
+async function evalFamily(C, keys, HYP, SCN) {
   const { pool, DS, out, LAB, ST, DSTRAT } = C;
   const minATR = DSTRAT.minATRpct(LAB.BASE);
-  const SC = { base: undefined, x2: { costBps: 18, slipBps: 6, slipStopBps: 10, minATRpct: minATR }, low: { costBps: 3, slipBps: 1, slipStopBps: 2, minATRpct: minATR } };
+  const SC = SCN?.SC || { base: undefined, x2: { costBps: 18, slipBps: 6, slipStopBps: 10, minATRpct: minATR }, low: { costBps: 3, slipBps: 1, slipStopBps: 2, minATRpct: minATR } };
+  const LB = SCN?.labels || { x2: 'Custos ×2 (18 bps)', low: 'custos 3 bps' };
   const jobs = []; for (const h of HYP) for (const k of keys) for (const [sc, over] of Object.entries(SC)) jobs.push({ ds: 'ind:' + k, conf: h.conf, tag: `${h.id}|${k}|${sc}`, over });
   const res = await pool.run(jobs, 4), bad = res.filter(r => !r.ok); if (bad.length) out(`> erros: ${bad.slice(0, 3).map(b => b.tag + ': ' + b.err).join(' | ')}`);
   const get = (h, k, sc) => res.find(r => r.tag === `${h}|${k}|${sc}`);
@@ -22,11 +23,11 @@ async function evalFamily(C, keys, HYP) {
   const verdicts = {}, pOne = {};
   for (const h of HYP) {
     out(`## ${h.id} — ${h.name}`); out(''); out('Configuração: `' + h.conf.id + '`'); out('');
-    const rows = [], pooled = [], pooledX2 = [], pooledLow = []; let okSeries = 0, posSeries = 0, halvesOk = 0, halvesN = 0, ddOk = true, nElig = 0;
+    const rows = [], pooled = [], pooledX2 = [], pooledLow = [], pooledFull = []; let okSeries = 0, posSeries = 0, halvesOk = 0, halvesN = 0, ddOk = true, nElig = 0;
     for (const k of keys) {
       const b = get(h.id, k, 'base'); if (!b || !b.ok) continue; const d = DS['ind:' + k], tr = rOf(b), mid = (d.t0 + d.t1) / 2;
       const rr = tr.map(t => t.r), h1 = tr.filter(t => t.o < mid).map(t => t.r), h2 = tr.filter(t => t.o >= mid).map(t => t.r);
-      pooled.push(...tr.map(t => ({ ...t, k }))); pooledX2.push(...rOf(get(h.id, k, 'x2')).map(t => ({ ...t, k }))); pooledLow.push(...rOf(get(h.id, k, 'low')).map(t => ({ ...t, k })));
+      pooled.push(...tr.map(t => ({ ...t, k }))); pooledX2.push(...rOf(get(h.id, k, 'x2')).map(t => ({ ...t, k }))); pooledLow.push(...rOf(get(h.id, k, 'low')).map(t => ({ ...t, k }))); if (SC.full) pooledFull.push(...rOf(get(h.id, k, 'full')).map(t => ({ ...t, k })));
       if (tr.length >= 10) { nElig++; if (mean(rr) > 0) posSeries++; if (b.maxDD > .25) ddOk = false; }
       if (tr.length > 20) { halvesN++; if (mean(h1) > 0 && mean(h2) > 0) halvesOk++; }
       const bh = Object.values(b.bh)[0];
@@ -39,7 +40,7 @@ async function evalFamily(C, keys, HYP) {
     const totalPnl = pooled.reduce((s, t) => s + t.pnl, 0), pnlSorted = pooled.map(t => t.pnl).sort((a, b) => b - a), top10 = pnlSorted.slice(0, Math.ceil(pnlSorted.length * .1)).reduce((s, x) => s + x, 0);
     pOne[h.id] = cb.pOne; verdicts[h.id] = { cb, n: R.length, mean: mean(R), top3Out, mx2, mlow, posSeries, nElig, halvesOk, halvesN, ddOk, longs, shorts, totalPnl, top10 };
     out(`**Agrupado (${keys.length} séries):** ${R.length} trades, R médio **${sg(mean(R))}**, IC95 % por clusters de mês [${sg(cb.lo)}, ${sg(cb.hi)}], t = ${f2(cb.t)}, p unilateral = ${pv(cb.pOne)} (${cb.clusters} meses). Desvio do R: ${f2(sd(R))}; percentis 5/25/50/75/95: ${[.05, .25, .5, .75, .95].map(q => sg(pctl(R, q))).join(' · ')}.`); out('');
-    out(`Compras: ${longs.length} trades, ${sg(mean(longs))} R · Vendas: ${shorts.length} trades, ${sg(mean(shorts))} R. Sem as 3 melhores trades: ${sg(top3Out)} R. Os 10 % melhores trades dão ${pc(top10 / (totalPnl || 1), 0)} do resultado total. Custos ×2 (18 bps): ${sg(mx2)} R · custos 3 bps: ${sg(mlow)} R.`); out('');
+    out(`Compras: ${longs.length} trades, ${sg(mean(longs))} R · Vendas: ${shorts.length} trades, ${sg(mean(shorts))} R. Sem as 3 melhores trades: ${sg(top3Out)} R. Os 10 % melhores trades dão ${pc(top10 / (totalPnl || 1), 0)} do resultado total. ${LB.x2}: ${sg(mx2)} R · ${LB.low}: ${sg(mlow)} R.${SC.full ? ' Sem redução de taxa (9 bps): ' + sg(mean(pooledFull.map(t => t.r))) + ' R.' : ''}`); out('');
   }
   // ---------- decisão (pré-registada) ----------
   out('## Decisão (regras de `PREREGISTO-FASE2.md` §1)'); out('');
@@ -47,7 +48,7 @@ async function evalFamily(C, keys, HYP) {
   const rowsD = hs.map((h, i) => { const v = verdicts[h.id], c1 = v.cb.t != null && v.cb.t >= 1.645 && adj[i] < .05, c2 = v.nElig > 0 && v.posSeries / v.nElig >= 2 / 3, c3 = v.mx2 > 0, c4 = v.top3Out > 0, c5 = v.ddOk, c6 = v.halvesN === 0 ? false : v.halvesOk / v.halvesN >= 2 / 3;
     const all = c1 && c2 && c3 && c4 && c5 && c6, cls = all ? '**aprovada para paper**' : (v.mean > 0 && v.cb.hi > 0 ? 'inconclusiva' : (v.mean <= 0 || v.cb.hi < .05 ? 'rejeitada' : 'inconclusiva'));
     return [h.id, h.name, v.n, sg(v.mean), `[${sg(v.cb.lo)}, ${sg(v.cb.hi)}]`, f2(v.cb.t), pv(v.cb.pOne), pv(adj[i]), c1 ? 'sim' : 'não', `${v.posSeries}/${v.nElig} ${c2 ? 'sim' : 'não'}`, c3 ? 'sim' : 'não', c4 ? 'sim' : 'não', c5 ? 'sim' : 'não', `${v.halvesOk}/${v.halvesN} ${c6 ? 'sim' : 'não'}`, cls]; });
-  out(table(['id', 'hipótese', 'trades', 'R médio', 'IC95 %', 't', 'p', `p Holm (${hs.length})`, '1) t≥1,645 corrigido', '2) ≥2/3 séries >0', '3) custos ×2 >0', '4) sem top-3 >0', '5) queda ≤25 %', '6) duas metades >0', 'classificação'], rowsD)); out('');
+  out(table(['id', 'hipótese', 'trades', 'R médio', 'IC95 %', 't', 'p', `p Holm (${hs.length})`, '1) t≥1,645 corrigido', '2) ≥2/3 séries >0', `3) ${SCN?.c3 || 'custos ×2'} >0`, '4) sem top-3 >0', '5) queda ≤25 %', '6) duas metades >0', 'classificação'], rowsD)); out('');
   const need = Math.ceil((1.645 * 1.3 / .15) ** 2);
   out(`Poder: para detetar +0,15 R com desvio 1,3 R a t = 1,645 são precisos cerca de **${need} trades agrupados**; cada hipótese teve ${hs.map(h => `${h.id}: ${verdicts[h.id].n}`).join(', ')}.`); out('');
   return { verdicts, res, get, rOf, hs, adj };
@@ -107,4 +108,23 @@ export async function partD(C) {
   out('## Comparação com a regra atual (mesmas séries)'); out('');
   out(table(['regra', 'trades', 'R médio', 'IC95 %'], [['REF (atual)', r.n, sg(r.mean), `[${sg(r.cb.lo)}, ${sg(r.cb.hi)}]`], ['H5 (expansão)', v5.n, sg(v5.mean), `[${sg(v5.cb.lo)}, ${sg(v5.cb.hi)}]`], ['H6 (volume)', v6.n, sg(v6.mean), `[${sg(v6.cb.lo)}, ${sg(v6.cb.hi)}]`]])); out('');
   C.D = { verdicts };
+}
+
+/* Parte E: H7-H10 (adenda 2 do pré-registo): regras H1-H4 em S&P 500 e EUR/USD a custos de «modo de crescimento» */
+export async function partE(C) {
+  const { DS, out, LAB, DSTRAT } = C;
+  const keys = ['GSPC', 'EURUSD'].filter(k => DS['ind:' + k]);
+  out('# Parte E — Regras de tendência a custos de «modo de crescimento» (H7-H10)'); out('');
+  out('Hipóteses fixadas na **Adenda 2** de `docs/PREREGISTO-FASE2.md` (enviada antes desta corrida). Séries: ' + keys.join(', ') + '. Cenário principal: taxa taker 0,9 bps, slippage 3/5 bps. **Os custos reais dos mercados `xyz:EUR` e `xyz:SP500` não estão confirmados**; o resultado só diz se vale a pena confirmá-los.'); out('');
+  const minATR = DSTRAT.minATRpct({ ...LAB.BASE, costBps: .9 });
+  out(`Filtro de custo fixo em ATR% mínimo = ${(minATR * 100).toFixed(3)} % (calculado com 0,9 bps) em todos os cenários, para os sinais serem os mesmos.`); out('');
+  const SC = { base: { costBps: .9, minATRpct: minATR }, x2: { costBps: 1.8, slipBps: 6, slipStopBps: 10, minATRpct: minATR }, low: { costBps: .9, slipBps: 1, slipStopBps: 2, minATRpct: minATR }, full: { costBps: 9, minATRpct: minATR } };
+  const HYP = [
+    { id: 'H7', name: 'Swing diário de produção (compra e venda)', conf: LAB.mkConf('brk_ema', { brk: 20 }, 'S', '1d') },
+    { id: 'H8', name: 'Donchian 55 + EMA 20/50, stop móvel 3×ATR', conf: LAB.mkConf('don', { N: 55, tr: 1 }, 'C', '1d') },
+    { id: 'H9', name: 'Momentum de série temporal (120 velas)', conf: LAB.mkConf('tsmom', { Ldays: 120 }, 'C', '1d') },
+    { id: 'H10', name: 'Só comprado acima da EMA 200', conf: LAB.mkConf('long200', { N: 200 }, 'E', '1d') },
+  ];
+  const { verdicts } = await evalFamily(C, keys, HYP, { SC, labels: { x2: 'Cenário ×2 (1,8 bps, slippage 6/10)', low: 'slippage curto (1/2 bps)' }, c3: 'cenário ×2' });
+  C.E = { verdicts };
 }

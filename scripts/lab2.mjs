@@ -11,7 +11,7 @@ import { MS, fetchBinance, fetchYahooDaily, splitTimes, fingerprint } from './li
 import { makePool } from './lib/pool.mjs';
 import { partA } from './lab2-audit.mjs';
 import { partB } from './lab2-breakout.mjs';
-import { partC, partD, SERIES } from './lab2-swing.mjs';
+import { partC, partD, partE, SERIES } from './lab2-swing.mjs';
 import { iso, table } from './lib/util.mjs';
 
 const A = process.argv.slice(2), arg = (k, d) => { const i = A.indexOf('--' + k); return i >= 0 ? (A[i + 1] && !A[i + 1].startsWith('--') ? A[i + 1] : true) : d; };
@@ -33,7 +33,7 @@ function synthetic(n, step, seed, p0, weekdays = false) { const r = ST.rng(seed)
     datasets['real:' + iv] = { bars, ...sp, iv, barMs: MS[iv], fp: Object.fromEntries(Object.entries(bars).map(([k, b]) => [k, fingerprint(b)])) };
     datasets['null1:' + iv] = { bars: Object.fromEntries(Object.entries(bars).map(([k, b]) => [k, ST.shuffleBars(b, 11 + k.length, 1)])), ...sp, iv, barMs: MS[iv] };
   }
-  if (PARTS.includes('C') || PARTS.includes('D')) for (const s of SERIES) {
+  if (PARTS.includes('C') || PARTS.includes('D') || PARTS.includes('E')) for (const s of SERIES) {
     try {
       let bars = SYN ? synthetic(SMALL ? 3000 : 6000, MS['1d'], 10 + s.key.length, 100, true) : await fetchYahooDaily(s.sym); const meta = bars.meta;
       if (s.to) bars = bars.filter(b => b.t <= s.to);
@@ -49,7 +49,7 @@ function synthetic(n, step, seed, p0, weekdays = false) { const r = ST.rng(seed)
   const C = { pool, DS: datasets, out, LAB, ST, BT, DSTRAT, IVS: SMALL ? ['4h'] : IVS };
   for (const P of PARTS) {
     const t0 = Date.now(); buf = [];
-    try { if (P === 'A') await partA(C); else if (P === 'B') await partB(C); else if (P === 'C') await partC(C); else if (P === 'D') await partD(C); }
+    try { if (P === 'A') await partA(C); else if (P === 'B') await partB(C); else if (P === 'C') await partC(C); else if (P === 'D') await partD(C); else if (P === 'E') await partE(C); }
     catch (e) { out(`> ERRO na parte ${P}: ${e && e.stack || e}`); console.error('ERRO parte', P, e); }
     parts[P] = buf.join('\n'); console.error(`parte ${P} em ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
