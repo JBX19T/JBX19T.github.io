@@ -277,3 +277,7 @@ Pesquisa de fontes (`docs/PESQUISA-ESTRATEGIAS.md`), biblioteca de 29 famílias 
 ## 15. Laboratório — Fase 2 (2026-10-21)
 
 Auditoria das 1 655 experiências, diagnóstico do rompimento e 10 hipóteses pré-registadas em dados independentes. **Nenhuma estratégia aprovada**; o rompimento atual é significativamente negativo fora do universo de desenvolvimento (R −0,10, t −8,3, 2 314 trades). Relatório: `docs/LABORATORIO-FASE2.md`; tabelas: `docs/LABORATORIO-FASE2-RESULTADOS.md`; pré-registo: `docs/PREREGISTO-FASE2.md`. Nada em produção foi alterado.
+
+## 16. Missão «estratégia original» — Ciclos 1–3 (2026-10-21)
+
+Três arquiteturas novas (previsão conjunta com limiar de custo, funding, carteira neutra ao mercado), 47 configurações de decisão com Holm cumulativo, regras pré-registadas antes de cada corrida. **Nenhuma estratégia validada.** Relatório: `docs/MISSAO-RELATORIO-1.md`. Nada em produção foi alterado.
